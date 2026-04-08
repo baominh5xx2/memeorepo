@@ -113,6 +113,8 @@ class PseudoMaskGenerator:
             if damp_ckpt:
                 self.wrapper.load_damp_prompt_checkpoints(damp_ckpt)
 
+        print(f"[Stage2] device={self.wrapper.device}")
+
         prompts_cfg = cfg["prompts"]
         self.prompt_manager = PromptManager(
             template=prompts_cfg["template"],

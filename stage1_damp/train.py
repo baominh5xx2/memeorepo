@@ -75,6 +75,7 @@ class InternalStage1Trainer:
             enable_mutual_prompting=True,
         )
         self.device = self.wrapper.device
+        print(f"[Stage1] device={self.device}")
 
         self.source_root = cfg.dataset_root / cfg.source_domain
         self.target_root = cfg.dataset_root / cfg.target_domain

@@ -49,9 +49,16 @@ python main.py --source Hist --target BCSS --exp-name real_hist_to_bcss
 
 Useful options:
 - `--skip-prepare` when `data/CrossDomainSeg` is already prepared.
+- `--prepare-workers 64 --prepare-domain-workers 2` to speed up Phase 1 preprocessing.
 - `--skip-stage1 --stage1-ckpt <path>` when reusing existing Stage 1 checkpoint.
 - `--stage2-disable-crf` if `pydensecrf` is unavailable.
 - `--dry-run` to print all stage commands without executing.
+
+Fast prepare example (parallel copy/remap):
+
+```bash
+python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg --prepare-workers 64 --prepare-domain-workers 2 --stage2-disable-crf
+```
 
 ## Troubleshooting
 

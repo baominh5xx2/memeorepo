@@ -85,6 +85,7 @@ def main() -> None:
     cfg = apply_overrides(cfg, parse_overrides(args.override))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[Stage3] device={device}")
     model_cfg = cfg["model"]
     train_cfg = cfg["training"]
     opt_cfg = cfg["optimizer"]

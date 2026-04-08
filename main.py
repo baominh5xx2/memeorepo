@@ -28,6 +28,18 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--raw-data-root", type=str, default="data")
     parser.add_argument("--dataset-root", type=str, default="data/CrossDomainSeg")
+    parser.add_argument(
+        "--prepare-workers",
+        type=int,
+        default=64,
+        help="Worker threads for Phase 1 dataset preparation",
+    )
+    parser.add_argument(
+        "--prepare-domain-workers",
+        type=int,
+        default=1,
+        help="How many domains to prepare in parallel during Phase 1 (1 or 2)",
+    )
 
     parser.add_argument("--stage1-config", type=str, default="configs/stage1_damp.yaml")
     parser.add_argument("--stage2-config", type=str, default="configs/stage2_cam.yaml")
@@ -126,6 +138,10 @@ def main() -> None:
                 args.raw_data_root,
                 "--output-root",
                 args.dataset_root,
+                "--num-workers",
+                str(args.prepare_workers),
+                "--domain-workers",
+                str(args.prepare_domain_workers),
             ],
             dry_run=args.dry_run,
         )
