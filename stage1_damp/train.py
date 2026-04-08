@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from damp_es.common.config import apply_overrides, load_yaml_config, parse_overrides
 from damp_es.common.io import ensure_dir
@@ -214,7 +215,16 @@ class InternalStage1Trainer:
 
         target_iter = iter(target_loader)
 
-        for source_batch in source_loader:
+        n_steps = max(len(source_loader), 1)
+        progress = tqdm(
+            source_loader,
+            total=len(source_loader),
+            desc=f"[Stage1] epoch {self._current_epoch}/{self.cfg.epochs}",
+            dynamic_ncols=True,
+            leave=False,
+        )
+
+        for step_idx, source_batch in enumerate(progress, start=1):
             try:
                 target_batch = next(target_iter)
             except StopIteration:
@@ -294,7 +304,21 @@ class InternalStage1Trainer:
             total_cls += float(loss_cls.item())
             total_im += float(loss_im.item())
 
-        n_steps = max(len(source_loader), 1)
+            if step_idx % 10 == 0 or step_idx == n_steps:
+                avg_loss = total_loss / float(step_idx)
+                avg_cls = total_cls / float(step_idx)
+                avg_im = total_im / float(step_idx)
+                src_acc = float(total_correct) / float(max(total_seen, 1))
+                progress.set_postfix(
+                    {
+                        "loss": f"{avg_loss:.4f}",
+                        "cls": f"{avg_cls:.4f}",
+                        "im": f"{avg_im:.4f}",
+                        "src_acc": f"{src_acc:.3f}",
+                    }
+                )
+
+        progress.close()
         return {
             "loss_total": total_loss / n_steps,
             "loss_cls": total_cls / n_steps,
