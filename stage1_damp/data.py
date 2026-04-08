@@ -18,6 +18,7 @@ except AttributeError:  # pragma: no cover - PIL compatibility
 
 
 WEAK_PATTERN = re.compile(r"\[([01])\s*([01])\s*([01])\s*([01])\]$")
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
 
 def build_transformed_image(image_path: Path, image_size: int) -> torch.Tensor:
@@ -32,7 +33,31 @@ def build_transformed_image(image_path: Path, image_size: int) -> torch.Tensor:
     return image_tensor
 
 
-def resolve_image_path(images_dir: Path, sample_id: str) -> Path:
+def build_image_index(images_dir: Path) -> Dict[str, Path]:
+    if not images_dir.exists():
+        raise FileNotFoundError(f"Image directory does not exist: {images_dir}")
+
+    index: Dict[str, Path] = {}
+    for path in sorted(images_dir.iterdir()):
+        if not path.is_file():
+            continue
+        if path.name.startswith(".") or path.name.startswith("._"):
+            continue
+        if path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        index.setdefault(path.stem, path)
+
+    if not index:
+        raise RuntimeError(f"No valid image files found in: {images_dir}")
+    return index
+
+
+def resolve_image_path(images_dir: Path, sample_id: str, image_index: Dict[str, Path] | None = None) -> Path:
+    if image_index is not None:
+        image_path = image_index.get(sample_id)
+        if image_path is not None:
+            return image_path
+
     if not images_dir.exists():
         raise FileNotFoundError(f"Image directory does not exist: {images_dir}")
 
@@ -105,6 +130,8 @@ class SplitImageDataset(Dataset):
         self.split = split
         self.image_size = image_size
         self.ids = self._load_ids()
+        self.images_dir = self.domain_root / "images"
+        self.image_index = build_image_index(self.images_dir)
 
     def __len__(self) -> int:
         return len(self.ids)
@@ -120,8 +147,11 @@ class SplitImageDataset(Dataset):
         return load_split_ids(split_path)
 
     def _resolve_image(self, sample_id: str) -> Path:
-        images_dir = self.domain_root / "images"
-        return resolve_image_path(images_dir=images_dir, sample_id=sample_id)
+        return resolve_image_path(
+            images_dir=self.images_dir,
+            sample_id=sample_id,
+            image_index=self.image_index,
+        )
 
 
 class SourceWeakLabelDataset(Dataset):
@@ -131,18 +161,24 @@ class SourceWeakLabelDataset(Dataset):
         self.domain_root = Path(domain_root)
         self.split = split
         self.image_size = image_size
+        self.images_dir = self.domain_root / "images"
 
         split_path = self.domain_root / "splits" / f"{self.split}.txt"
         self.ids = load_split_ids(split_path)
         weak_csv = self.domain_root / "metadata" / "train_weak_labels.csv"
         self.weak_map = load_weak_label_map(weak_csv)
+        self.image_index = build_image_index(self.images_dir)
 
     def __len__(self) -> int:
         return len(self.ids)
 
     def __getitem__(self, index: int) -> Dict[str, str | torch.Tensor | int]:
         sample_id = self.ids[index]
-        image_path = resolve_image_path(self.domain_root / "images", sample_id)
+        image_path = resolve_image_path(
+            images_dir=self.images_dir,
+            sample_id=sample_id,
+            image_index=self.image_index,
+        )
         image_tensor = build_transformed_image(image_path=image_path, image_size=self.image_size)
         label = self._resolve_label(sample_id)
         return {"sample_id": sample_id, "image": image_tensor, "label": label}

@@ -46,6 +46,21 @@ class TargetSplitReader:
     def __init__(self, domain_root: Path, split: str):
         self.domain_root = domain_root
         self.split = split
+        self.image_dir = self.domain_root / "images"
+        self.image_index = self._build_image_index()
+
+    def _build_image_index(self) -> Dict[str, Path]:
+        if not self.image_dir.exists():
+            raise FileNotFoundError(f"Image directory not found: {self.image_dir}")
+
+        index: Dict[str, Path] = {}
+        for p in sorted(self.image_dir.iterdir()):
+            if not p.is_file():
+                continue
+            if p.name.startswith(".") or p.name.startswith("._"):
+                continue
+            index.setdefault(p.stem, p)
+        return index
 
     def list_samples(self) -> List[str]:
         split_file = self.domain_root / "splits" / f"{self.split}.txt"
@@ -56,12 +71,16 @@ class TargetSplitReader:
             return [line.strip() for line in f if line.strip()]
 
     def resolve_image_path(self, sample_id: str) -> Path:
-        image_dir = self.domain_root / "images"
+        image_dir = self.image_dir
         candidate_exts = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
         for ext in candidate_exts:
             candidate = image_dir / f"{sample_id}{ext}"
             if candidate.exists():
                 return candidate
+
+        indexed = self.image_index.get(sample_id)
+        if indexed is not None:
+            return indexed
 
         matches = [
             p
