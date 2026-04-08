@@ -11,10 +11,10 @@ class PromptBundle:
     class_names: List[str]
     background_names: List[str]
     full_names: List[str]
-    class_features: torch.Tensor
-    background_features: torch.Tensor
-    full_features: torch.Tensor
+    full_phrases: List[str]
+    tokenized_full: torch.Tensor
     class_to_full_indices: List[int]
+    class_prompt_map: Dict[str, str]
 
 
 class PromptManager:
@@ -25,43 +25,120 @@ class PromptManager:
         template: str,
         class_synonyms: Dict[str, List[str]],
         background_names: List[str],
+        use_sharpness_selection: bool = True,
+        use_synonym_fusion: bool = True,
+        extra_templates: List[str] | None = None,
+        sharpness_eps: float = 1e-6,
     ):
         self.template = template
         self.class_synonyms = class_synonyms
         self.background_names = background_names
+        self.use_sharpness_selection = bool(use_sharpness_selection)
+        self.use_synonym_fusion = bool(use_synonym_fusion)
+        self.extra_templates = list(extra_templates or [])
+        self.sharpness_eps = float(sharpness_eps)
 
     def build(self, damp_wrapper) -> PromptBundle:
-        device = damp_wrapper.device
-
         class_names = list(self.class_synonyms.keys())
-        class_features = []
-        for canonical_name in class_names:
-            synonyms = self.class_synonyms[canonical_name]
-            synonym_features = self._encode_phrases(damp_wrapper, synonyms, device)
-            synonym_features = synonym_features / synonym_features.norm(dim=-1, keepdim=True)
-            averaged = synonym_features.mean(dim=0)
-            averaged = averaged / averaged.norm()
-            class_features.append(averaged)
+        class_prototypes = self._encode_phrases(
+            damp_wrapper=damp_wrapper,
+            phrases=class_names,
+            template=self.template,
+        )
 
-        class_features_tensor = torch.stack(class_features, dim=0)
-        bg_features_tensor = self._encode_phrases(damp_wrapper, self.background_names, device)
-        bg_features_tensor = bg_features_tensor / bg_features_tensor.norm(dim=-1, keepdim=True)
+        class_prompt_map: Dict[str, str] = {}
+        class_prompts: List[str] = []
+        for class_idx, canonical_name in enumerate(class_names):
+            synonyms = list(self.class_synonyms[canonical_name])
+            if canonical_name not in synonyms:
+                synonyms.insert(0, canonical_name)
+            candidates = self._build_candidates(canonical_name=canonical_name, synonyms=synonyms)
+            if self.use_sharpness_selection and len(candidates) > 1:
+                selected = self._select_by_sharpness(
+                    damp_wrapper=damp_wrapper,
+                    candidates=candidates,
+                    class_prototypes=class_prototypes,
+                    target_index=class_idx,
+                )
+            else:
+                selected = candidates[0]
+            class_prompt_map[canonical_name] = selected
+            class_prompts.append(selected)
 
-        full_features = torch.cat([class_features_tensor, bg_features_tensor], dim=0)
-        full_features = full_features / full_features.norm(dim=-1, keepdim=True)
+        background_prompts = [self.template.format(name) for name in self.background_names]
+        full_phrases = class_prompts + background_prompts
+        tokenized_full = damp_wrapper.tokenize(full_phrases)
 
         class_to_full_indices = list(range(len(class_names)))
         return PromptBundle(
             class_names=class_names,
             background_names=list(self.background_names),
             full_names=class_names + list(self.background_names),
-            class_features=class_features_tensor,
-            background_features=bg_features_tensor,
-            full_features=full_features,
+            full_phrases=full_phrases,
+            tokenized_full=tokenized_full,
             class_to_full_indices=class_to_full_indices,
+            class_prompt_map=class_prompt_map,
         )
 
-    def _encode_phrases(self, damp_wrapper, phrases: List[str], device: torch.device) -> torch.Tensor:
-        prompts = [self.template.format(phrase) for phrase in phrases]
-        tokenized = damp_wrapper.tokenize(prompts).to(device)
+    def _encode_phrases(
+        self,
+        damp_wrapper,
+        phrases: List[str],
+        template: str,
+    ) -> torch.Tensor:
+        prompts = [template.format(phrase) for phrase in phrases]
+        tokenized = damp_wrapper.tokenize(prompts)
         return damp_wrapper.encode_text(tokenized)
+
+    def _build_candidates(self, canonical_name: str, synonyms: List[str]) -> List[str]:
+        templates = [self.template, *self.extra_templates]
+        templates = [tpl for tpl in templates if isinstance(tpl, str) and tpl.strip()]
+        if not templates:
+            templates = [self.template]
+
+        candidates: List[str] = []
+        for tpl in templates:
+            for phrase in synonyms:
+                candidates.append(tpl.format(phrase))
+            if self.use_synonym_fusion and len(synonyms) > 1:
+                fused = self._fuse_synonyms(canonical_name=canonical_name, synonyms=synonyms)
+                candidates.append(tpl.format(fused))
+
+        # Stable de-dup while preserving order.
+        seen = set()
+        unique: List[str] = []
+        for prompt in candidates:
+            if prompt not in seen:
+                seen.add(prompt)
+                unique.append(prompt)
+        return unique
+
+    def _fuse_synonyms(self, canonical_name: str, synonyms: List[str]) -> str:
+        tail = [s for s in synonyms if s != canonical_name]
+        if not tail:
+            return canonical_name
+        return f"{canonical_name} with {', '.join(tail)}"
+
+    def _select_by_sharpness(
+        self,
+        damp_wrapper,
+        candidates: List[str],
+        class_prototypes: torch.Tensor,
+        target_index: int,
+    ) -> str:
+        best_prompt = candidates[0]
+        best_score = float("inf")
+
+        for candidate in candidates:
+            tokenized = damp_wrapper.tokenize([candidate])
+            feature = damp_wrapper.encode_text(tokenized)[0]
+            similarities = feature @ class_prototypes.t()
+            sharpness = similarities.var() / (similarities.abs().mean() + self.sharpness_eps)
+            target_sim = similarities[target_index]
+            score = sharpness / (target_sim.abs() + self.sharpness_eps)
+            value = float(score.item())
+            if value < best_score:
+                best_score = value
+                best_prompt = candidate
+
+        return best_prompt

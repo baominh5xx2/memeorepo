@@ -261,7 +261,7 @@ class DAMPWrapper:
         self.context_decoder = ContextDecoder(
             transformer_width=256,
             transformer_heads=4,
-            transformer_layers=6,
+            transformer_layers=2,
             visual_dim=self.feature_dim,
             dropout=0.1,
         ).to(self.device)
@@ -311,10 +311,45 @@ class DAMPWrapper:
         return clip_es.tokenize(prompts).to(self.device)
 
     def encode_text(self, tokenized_text: torch.Tensor) -> torch.Tensor:
+        tokenized_text = tokenized_text.to(self.device)
         with torch.no_grad():
-            text_features = self.clip_model.encode_text(tokenized_text.to(self.device))
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            text_features, _ = self._encode_text_from_tokens(tokenized_text)
         return text_features
+
+    def forward_logits_tokenized(
+        self,
+        image: torch.Tensor,
+        tokenized_text: torch.Tensor,
+        replace_cls_with_avg: bool = False,
+        use_mutual_text: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        tokenized_text = tokenized_text.to(self.device)
+        global_feat, visual_embeddings, final_tokens = self._extract_visual_features(image.to(self.device), for_cam=True)
+
+        if self.enable_mutual_prompting:
+            image_embedding = self._apply_visual_prompt(global_feat, visual_embeddings, track_grad=True)
+        else:
+            image_embedding = self._tokens_to_embedding(
+                final_tokens=final_tokens,
+                replace_cls_with_avg=replace_cls_with_avg,
+            )
+
+        if use_mutual_text and self.enable_mutual_prompting:
+            text_features = self._apply_text_prompt(
+                tokenized_text=tokenized_text,
+                global_feat=global_feat,
+                visual_embeddings=visual_embeddings,
+                track_grad=True,
+            )
+        else:
+            base_text, _ = self._encode_text_from_tokens(tokenized_text)
+            text_features = base_text.unsqueeze(0).expand(image_embedding.shape[0], -1, -1)
+
+        logits = self._compute_logits_per_image_text(
+            image_embedding=image_embedding,
+            text_features=text_features,
+        )
+        return logits, text_features
 
     def forward_stage1(self, image: torch.Tensor, ind: bool = False, pse: bool = False) -> tuple[torch.Tensor, ...]:
         global_feat, visual_embeddings, _ = self._extract_visual_features(image.to(self.device), for_cam=False)
@@ -653,6 +688,47 @@ class DAMPWrapper:
         text_features = F.normalize(text_features.to(self.device).float(), dim=-1)
         logit_scale = self.clip_model.logit_scale.exp().float()
         return logit_scale * image_features @ text_features.t()
+
+    def _compute_logits_per_image_text(self, image_embedding: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
+        image_features = F.normalize(image_embedding.float(), dim=-1)
+        text_features = F.normalize(text_features.to(self.device).float(), dim=-1)
+        logit_scale = self.clip_model.logit_scale.exp().float()
+        return logit_scale * torch.einsum("bc,bkc->bk", image_features, text_features)
+
+    def _encode_text_from_tokens(self, tokenized_text: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        tokenized_text = tokenized_text.to(self.device)
+        prompt_embeddings = self.clip_model.token_embedding(tokenized_text).type(self.clip_model.dtype)
+        text_features, text_tokens = self.text_encoder(prompt_embeddings, tokenized_text)
+        text_features = F.normalize(text_features.float(), dim=-1)
+        text_tokens = text_tokens.float()
+        return text_features, text_tokens
+
+    def _apply_text_prompt(
+        self,
+        tokenized_text: torch.Tensor,
+        global_feat: torch.Tensor,
+        visual_embeddings: torch.Tensor,
+        track_grad: bool,
+    ) -> torch.Tensor:
+        bsz, channels, h, w = visual_embeddings.shape
+        visual_contexts = torch.cat(
+            [global_feat.reshape(bsz, channels, 1), visual_embeddings.reshape(bsz, channels, h * w)],
+            dim=2,
+        ).permute(0, 2, 1)
+
+        with torch.no_grad():
+            text_features, _ = self._encode_text_from_tokens(tokenized_text)
+        text_features = text_features.unsqueeze(0).expand(bsz, -1, -1)
+        if track_grad:
+            text_diff = self.context_decoder(text_features.float(), visual_contexts.float())
+        else:
+            with torch.no_grad():
+                text_diff = self.context_decoder(text_features.float(), visual_contexts.float())
+
+        updated_text = text_features.float() + self.prompt_learner.gamma_t.float() * text_diff
+        updated_text = F.normalize(updated_text, dim=-1)
+
+        return updated_text
 
     @staticmethod
     def _tokens_to_feature_map(tokens: torch.Tensor) -> torch.Tensor:

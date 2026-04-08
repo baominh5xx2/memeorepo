@@ -16,6 +16,13 @@ prompts:
     - "background"
     - "tissue"
     - "slide"
+  strategy:
+    use_sharpness_selection: true
+    use_synonym_fusion: true
+    extra_templates:
+      - "a histopathology patch of {}."
+      - "a microscopy image of {}."
+    sharpness_eps: 1.0e-6
 
 cam:
   use_softmax_gradcam: true
@@ -25,6 +32,14 @@ caa:
   enabled: true
   threshold: 0.4
   iterations: 2
+
+refinement:
+  mode: "hybrid" # caa | co_attention | hybrid
+  co_attention:
+    alpha: 0.6
+    beta: 0.4
+    blend: 0.5
+    temperature: 0.07
 
 crf:
   enabled: true
@@ -36,7 +51,7 @@ crf:
   bi_rgb_std: 3
 
 confidence:
-  threshold: 0.95
+  threshold: 0.25
 
 runtime:
   allow_tf32: true

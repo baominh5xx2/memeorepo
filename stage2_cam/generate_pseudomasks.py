@@ -16,6 +16,7 @@ from damp_es.common.config import apply_overrides, load_yaml_config, parse_overr
 from damp_es.common.io import ensure_dir
 from damp_es.stage1_damp.model import DAMPWrapper
 from damp_es.stage2_cam.caa import CAARefiner
+from damp_es.stage2_cam.co_attention import BidirectionalCoAttentionRefiner
 from damp_es.stage2_cam.crf import CRFParams, DenseCRFRefiner
 from damp_es.stage2_cam.prompts import PromptManager
 from damp_es.stage2_cam.softmax_gradcam import SoftmaxGradCAM
@@ -206,12 +207,22 @@ class PseudoMaskGenerator:
         )
 
         prompts_cfg = cfg["prompts"]
+        prompt_strategy_cfg = prompts_cfg.get("strategy", {})
         self.prompt_manager = PromptManager(
             template=prompts_cfg["template"],
             class_synonyms=prompts_cfg["classes"],
             background_names=prompts_cfg["background"],
+            use_sharpness_selection=bool(prompt_strategy_cfg.get("use_sharpness_selection", True)),
+            use_synonym_fusion=bool(prompt_strategy_cfg.get("use_synonym_fusion", True)),
+            extra_templates=list(prompt_strategy_cfg.get("extra_templates", [])),
+            sharpness_eps=float(prompt_strategy_cfg.get("sharpness_eps", 1e-6)),
         )
         self.prompt_bundle = self.prompt_manager.build(self.wrapper)
+        if self.prompt_bundle.class_prompt_map:
+            prompt_log = ", ".join(
+                [f"{k}: '{v}'" for k, v in self.prompt_bundle.class_prompt_map.items()]
+            )
+            print(f"[Stage2] selected class prompts -> {prompt_log}")
 
         self.cam_generator = SoftmaxGradCAM(
             damp_wrapper=self.wrapper,
@@ -225,6 +236,20 @@ class PseudoMaskGenerator:
             threshold=float(cfg["caa"].get("threshold", 0.4)),
             n_iter=int(cfg["caa"].get("iterations", 2)),
         )
+
+        refinement_cfg = cfg.get("refinement", {})
+        self.refinement_mode = str(refinement_cfg.get("mode", "caa")).strip().lower()
+        coattn_cfg = refinement_cfg.get("co_attention", {})
+        self.co_attention_refiner = BidirectionalCoAttentionRefiner(
+            alpha=float(coattn_cfg.get("alpha", 0.6)),
+            beta=float(coattn_cfg.get("beta", 0.4)),
+            blend=float(coattn_cfg.get("blend", 0.5)),
+            temperature=float(coattn_cfg.get("temperature", 0.07)),
+        )
+        if self.refinement_mode not in {"caa", "co_attention", "hybrid"}:
+            raise ValueError(
+                f"Unsupported refinement.mode='{self.refinement_mode}'. Expected one of: caa, co_attention, hybrid"
+            )
 
         crf_cfg = cfg["crf"]
         self.use_crf = bool(crf_cfg.get("enabled", True))
@@ -302,30 +327,44 @@ class PseudoMaskGenerator:
             fg_cams = []
             cam_results = self.cam_generator.compute_for_classes(
                 image=image_tensor,
-                text_features=self.prompt_bundle.full_features,
                 class_indices=self.prompt_bundle.class_to_full_indices,
+                tokenized_prompts=self.prompt_bundle.tokenized_full,
+                use_mutual_text=True,
             )
 
             for cam_result in cam_results:
 
                 cam = cam_result.cam
-                if self.cfg["caa"].get("enabled", True):
+                affinity = cam_result.affinity
+                token_side = int(round(float(affinity.shape[0]) ** 0.5))
+                cam_low = F.interpolate(
+                    cam.unsqueeze(0).unsqueeze(0),
+                    size=(token_side, token_side),
+                    mode="bilinear",
+                    align_corners=False,
+                ).squeeze(0).squeeze(0)
+
+                use_caa = self.refinement_mode in {"caa", "hybrid"} and bool(self.cfg["caa"].get("enabled", True))
+                use_coattn = self.refinement_mode in {"co_attention", "hybrid"}
+
+                if use_caa:
                     affinity = cam_result.affinity
-                    token_side = int(round(float(affinity.shape[0]) ** 0.5))
-                    cam_low = F.interpolate(
-                        cam.unsqueeze(0).unsqueeze(0),
-                        size=(token_side, token_side),
-                        mode="bilinear",
-                        align_corners=False,
-                    ).squeeze(0).squeeze(0)
                     cam_low = self.caa_refiner.refine(cam_2d=cam_low, affinity=affinity)
-                    cam = F.interpolate(
-                        cam_low.unsqueeze(0).unsqueeze(0),
-                        size=cam.shape,
-                        mode="bilinear",
-                        align_corners=False,
-                    ).squeeze(0).squeeze(0)
-                    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+
+                if use_coattn:
+                    cam_low = self.co_attention_refiner.refine(
+                        cam_2d=cam_low,
+                        patch_features=cam_result.patch_features,
+                        text_feature=cam_result.text_feature,
+                    )
+
+                cam = F.interpolate(
+                    cam_low.unsqueeze(0).unsqueeze(0),
+                    size=cam.shape,
+                    mode="bilinear",
+                    align_corners=False,
+                ).squeeze(0).squeeze(0)
+                cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
                 cam = F.interpolate(
                     cam.unsqueeze(0).unsqueeze(0),
                     size=(orig_h, orig_w),
@@ -335,6 +374,8 @@ class PseudoMaskGenerator:
                 fg_cams.append(cam.float().cpu().numpy())
 
             fg_prob = np.stack(fg_cams, axis=0)
+            max_fg = np.max(fg_prob, axis=0)
+            cam_confidence = np.maximum(max_fg, 1.0 - max_fg).astype(np.float32)
             bg_prob = np.maximum(0.0, 1.0 - np.max(fg_prob, axis=0, keepdims=True))
             probs = np.concatenate([bg_prob, fg_prob], axis=0).astype(np.float32)
             probs = probs / (probs.sum(axis=0, keepdims=True) + 1e-8)
@@ -351,13 +392,15 @@ class PseudoMaskGenerator:
             pred[confidence < conf_threshold] = 255
 
             Image.fromarray(pred, mode="L").save(self.paths.pseudomask_dir / f"{sample_id}.png")
-            np.save(self.paths.confidence_dir / f"{sample_id}.npy", confidence.astype(np.float32))
+            np.save(self.paths.confidence_dir / f"{sample_id}.npy", cam_confidence)
             np.save(
                 self.paths.cam_dir / f"{sample_id}.npy",
                 {
                     "class_names": self.prompt_bundle.class_names,
+                    "prompts": self.prompt_bundle.full_phrases,
                     "probs": probs,
                     "confidence": confidence,
+                    "cam_confidence": cam_confidence,
                 },
                 allow_pickle=True,
             )
