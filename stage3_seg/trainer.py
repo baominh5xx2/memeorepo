@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
@@ -31,6 +32,9 @@ class SegmentationTrainer:
         device: torch.device,
         save_dir: str | Path,
         eval_every: int = 1,
+        use_amp: bool = True,
+        amp_dtype: str = "bf16",
+        channels_last: bool = True,
     ):
         self.model = model.to(device)
         self.optimizer = optimizer
@@ -41,6 +45,26 @@ class SegmentationTrainer:
         self.save_dir = ensure_dir(save_dir)
         self.eval_every = eval_every
         self.state = TrainerState()
+
+        self.channels_last = bool(channels_last and self.device.type == "cuda")
+        if self.channels_last:
+            self.model = self.model.to(memory_format=torch.channels_last)
+
+        amp_name = str(amp_dtype).strip().lower()
+        if amp_name in {"fp16", "float16", "half"}:
+            self.amp_dtype = torch.float16
+        else:
+            self.amp_dtype = torch.bfloat16
+
+        self.use_amp = bool(use_amp and self.device.type == "cuda")
+        self.use_grad_scaler = bool(self.use_amp and self.amp_dtype == torch.float16)
+        if self.use_grad_scaler:
+            if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+                self.grad_scaler = torch.amp.GradScaler("cuda", enabled=True)
+            else:
+                self.grad_scaler = torch.cuda.amp.GradScaler(enabled=True)
+        else:
+            self.grad_scaler = None
 
     def train(self, epochs: int) -> None:
         for epoch in range(1, epochs + 1):
@@ -79,7 +103,16 @@ class SegmentationTrainer:
                 masks = batch["mask"].to(self.device)
                 sample_ids = batch["sample_id"]
 
-                logits = self.model(images)
+                if self.channels_last:
+                    images = images.contiguous(memory_format=torch.channels_last)
+
+                autocast_ctx = (
+                    torch.autocast(device_type="cuda", dtype=self.amp_dtype)
+                    if self.use_amp
+                    else nullcontext()
+                )
+                with autocast_ctx:
+                    logits = self.model(images)
                 preds = torch.argmax(logits, dim=1)
                 preds_np = preds.cpu().numpy().astype(np.uint8)
 
@@ -107,12 +140,26 @@ class SegmentationTrainer:
             if confidence is not None:
                 confidence = confidence.to(self.device)
 
-            logits = self.model(images)
-            loss = self.criterion(logits=logits, target=masks, confidence=confidence)
+            if self.channels_last:
+                images = images.contiguous(memory_format=torch.channels_last)
+
+            autocast_ctx = (
+                torch.autocast(device_type="cuda", dtype=self.amp_dtype)
+                if self.use_amp
+                else nullcontext()
+            )
+            with autocast_ctx:
+                logits = self.model(images)
+                loss = self.criterion(logits=logits, target=masks, confidence=confidence)
 
             self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            self.optimizer.step()
+            if self.grad_scaler is not None:
+                self.grad_scaler.scale(loss).backward()
+                self.grad_scaler.step(self.optimizer)
+                self.grad_scaler.update()
+            else:
+                loss.backward()
+                self.optimizer.step()
 
             running_loss += float(loss.item())
 

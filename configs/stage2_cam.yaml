@@ -38,6 +38,13 @@ crf:
 confidence:
   threshold: 0.95
 
+runtime:
+  allow_tf32: true
+  cudnn_benchmark: true
+  matmul_precision: "high"
+  amp: true
+  amp_dtype: "bf16"
+
 dataset:
   root: "data/CrossDomainSeg"
   target_domain: "BCSS"

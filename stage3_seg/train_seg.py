@@ -54,27 +54,42 @@ def build_dataloaders(cfg):
         image_size=int(train_cfg["image_size"]),
     )
 
+    num_workers = int(train_cfg["num_workers"])
+    pin_memory = bool(train_cfg.get("pin_memory", True))
+    persistent_workers = bool(train_cfg.get("persistent_workers", True))
+    prefetch_factor = int(train_cfg.get("prefetch_factor", 4))
+
+    train_loader_kwargs = {
+        "batch_size": int(train_cfg["batch_size"]),
+        "shuffle": True,
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+        "drop_last": True,
+    }
+    eval_loader_kwargs = {
+        "batch_size": int(train_cfg["batch_size"]),
+        "shuffle": False,
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+    }
+
+    if num_workers > 0:
+        train_loader_kwargs["persistent_workers"] = persistent_workers
+        train_loader_kwargs["prefetch_factor"] = max(1, prefetch_factor)
+        eval_loader_kwargs["persistent_workers"] = persistent_workers
+        eval_loader_kwargs["prefetch_factor"] = max(1, prefetch_factor)
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=int(train_cfg["batch_size"]),
-        shuffle=True,
-        num_workers=int(train_cfg["num_workers"]),
-        pin_memory=True,
-        drop_last=True,
+        **train_loader_kwargs,
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=int(train_cfg["batch_size"]),
-        shuffle=False,
-        num_workers=int(train_cfg["num_workers"]),
-        pin_memory=True,
+        **eval_loader_kwargs,
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=int(train_cfg["batch_size"]),
-        shuffle=False,
-        num_workers=int(train_cfg["num_workers"]),
-        pin_memory=True,
+        **eval_loader_kwargs,
     )
     return train_loader, val_loader, test_loader
 
@@ -85,7 +100,25 @@ def main() -> None:
     cfg = apply_overrides(cfg, parse_overrides(args.override))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    runtime_cfg = cfg.get("runtime", {})
+
+    if device.type == "cuda":
+        allow_tf32 = bool(runtime_cfg.get("allow_tf32", True))
+        torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+        torch.backends.cudnn.allow_tf32 = allow_tf32
+        torch.backends.cudnn.benchmark = bool(runtime_cfg.get("cudnn_benchmark", True))
+        try:
+            torch.set_float32_matmul_precision(str(runtime_cfg.get("matmul_precision", "high")))
+        except Exception:
+            pass
+
     print(f"[Stage3] device={device}")
+    print(
+        f"[Stage3] amp={bool(runtime_cfg.get('amp', True) and device.type == 'cuda')} "
+        f"amp_dtype={str(runtime_cfg.get('amp_dtype', 'bf16'))} "
+        f"tf32={bool(runtime_cfg.get('allow_tf32', True))} "
+        f"channels_last={bool(runtime_cfg.get('channels_last', True))}"
+    )
     model_cfg = cfg["model"]
     train_cfg = cfg["training"]
     opt_cfg = cfg["optimizer"]
@@ -142,6 +175,9 @@ def main() -> None:
         device=device,
         save_dir=train_cfg["save_dir"],
         eval_every=int(train_cfg.get("eval_every", 1)),
+        use_amp=bool(runtime_cfg.get("amp", True)),
+        amp_dtype=str(runtime_cfg.get("amp_dtype", "bf16")),
+        channels_last=bool(runtime_cfg.get("channels_last", True)),
     )
 
     trainer.train(epochs=int(train_cfg["epochs"]))

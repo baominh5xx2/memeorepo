@@ -35,6 +35,13 @@ class Stage2Paths:
     confidence_dir: Path
 
 
+def _resolve_amp_dtype(dtype_name: str) -> torch.dtype:
+    name = str(dtype_name).strip().lower()
+    if name in {"fp16", "float16", "half"}:
+        return torch.float16
+    return torch.bfloat16
+
+
 class TargetSplitReader:
     def __init__(self, domain_root: Path, split: str):
         self.domain_root = domain_root
@@ -73,6 +80,17 @@ class PseudoMaskGenerator:
     def __init__(self, cfg: Dict):
         self.cfg = cfg
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        runtime_cfg = cfg.get("runtime", {})
+
+        if torch.cuda.is_available():
+            allow_tf32 = bool(runtime_cfg.get("allow_tf32", True))
+            torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+            torch.backends.cudnn.allow_tf32 = allow_tf32
+            torch.backends.cudnn.benchmark = bool(runtime_cfg.get("cudnn_benchmark", True))
+            try:
+                torch.set_float32_matmul_precision(str(runtime_cfg.get("matmul_precision", "high")))
+            except Exception:
+                pass
 
         dataset_cfg = cfg["dataset"]
         output_cfg = cfg["output"]
@@ -114,6 +132,12 @@ class PseudoMaskGenerator:
                 self.wrapper.load_damp_prompt_checkpoints(damp_ckpt)
 
         print(f"[Stage2] device={self.wrapper.device}")
+        self.stage2_use_amp = bool(runtime_cfg.get("amp", True))
+        self.stage2_amp_dtype = _resolve_amp_dtype(str(runtime_cfg.get("amp_dtype", "bf16")))
+        print(
+            f"[Stage2] amp={bool(self.stage2_use_amp and self.wrapper.device.type == 'cuda')} "
+            f"amp_dtype={self.stage2_amp_dtype} tf32={bool(runtime_cfg.get('allow_tf32', True))}"
+        )
 
         prompts_cfg = cfg["prompts"]
         self.prompt_manager = PromptManager(
@@ -127,6 +151,8 @@ class PseudoMaskGenerator:
             damp_wrapper=self.wrapper,
             use_softmax=bool(cfg["cam"].get("use_softmax_gradcam", True)),
             replace_cls_with_avg=bool(cfg["cam"].get("replace_cls_with_avg", True)),
+            amp_enabled=self.stage2_use_amp,
+            amp_dtype=self.stage2_amp_dtype,
         )
 
         self.caa_refiner = CAARefiner(

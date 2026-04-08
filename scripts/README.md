@@ -54,10 +54,21 @@ Useful options:
 - `--stage2-disable-crf` if `pydensecrf` is unavailable.
 - `--dry-run` to print all stage commands without executing.
 
+H200 defaults are now enabled in config files:
+- Stage1: larger batch/workers + BF16 AMP + TF32
+- Stage2: BF16 AMP + TF32 for CAM generation
+- Stage3: larger batch/workers + BF16 AMP + TF32 + channels_last
+
 Fast prepare example (parallel copy/remap):
 
 ```bash
 python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg --prepare-workers 64 --prepare-domain-workers 2 --stage2-disable-crf
+```
+
+If you hit OOM, reduce stage batch sizes via override:
+
+```bash
+python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg --stage1-override training.batch_size=64 --stage3-override training.batch_size=8 --stage2-disable-crf
 ```
 
 ## Troubleshooting

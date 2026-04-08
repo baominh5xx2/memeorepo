@@ -16,8 +16,11 @@ mutual_prompting:
 
 training:
   epochs: 30
-  batch_size: 32
-  num_workers: 4
+  batch_size: 96
+  num_workers: 16
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 4
   image_size: 224
   warmup_epochs: 1
   optimizer: "adam"
@@ -25,6 +28,13 @@ training:
   weight_decay: 0.0
   output_dir: "checkpoints/stage1"
   save_every: 5
+
+runtime:
+  allow_tf32: true
+  cudnn_benchmark: true
+  matmul_precision: "high"
+  amp: true
+  amp_dtype: "bf16"
 
 losses:
   lambda_cls: 1.0
