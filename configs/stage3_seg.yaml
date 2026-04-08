@@ -1,0 +1,32 @@
+seed: 42
+
+dataset:
+  root: "data/CrossDomainSeg"
+  domain: "BCSS"
+  train_split: "train"
+  val_split: "val"
+  test_split: "test"
+  pseudo_mask_dir: "outputs/stage2/pseudomasks/hist_to_bcss"
+
+model:
+  architecture: "deeplabv3_resnet101"
+  pretrained_backbone: true
+  num_classes: 3
+
+optimizer:
+  name: "adamw"
+  lr: 6.0e-5
+  weight_decay: 1.0e-4
+
+training:
+  epochs: 40
+  batch_size: 8
+  num_workers: 2
+  image_size: 512
+  save_dir: "checkpoints/stage3/hist_to_bcss"
+  eval_every: 1
+
+cgl:
+  enabled: true
+  confidence_threshold: 0.25
+  ignore_index: 255

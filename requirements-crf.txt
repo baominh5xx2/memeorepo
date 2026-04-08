@@ -1,0 +1,2 @@
+# Optional dependencies for Stage2 CRF refinement
+pydensecrf>=1.0rc3

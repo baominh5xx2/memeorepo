@@ -1,0 +1,22 @@
+# Core runtime
+numpy<2.0
+Pillow>=10.0.0
+PyYAML>=6.0.1
+tqdm>=4.66.0
+
+# Deep learning stack
+torch>=2.1.0,<2.7.0
+torchvision>=0.16.0,<0.22.0
+
+# CLIP tokenizer utilities
+ftfy>=6.2.0
+regex>=2024.5.15
+packaging>=24.0
+
+# CAM/refinement utilities
+opencv-python-headless>=4.9.0
+
+# Metrics / utilities used by scripts
+scipy>=1.10.0
+scikit-image>=0.22.0
+scikit-learn>=1.3.0

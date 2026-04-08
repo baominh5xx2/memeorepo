@@ -1,0 +1,48 @@
+seed: 42
+
+model:
+  clip_backbone: "ViT-B/16"
+  clip_weights: "assets/ViT-B-16.pt"
+  damp_ckpt: "checkpoints/stage1/hist_to_bcss"
+  use_damp_features: true
+  feature_layer: -1
+
+prompts:
+  template: "a clean origami of {}."
+  classes:
+    tumor: ["tumor", "cancer", "neoplasm", "carcinoma"]
+    stroma: ["stroma", "stromal tissue", "connective tissue"]
+  background:
+    - "background"
+    - "tissue"
+    - "slide"
+
+cam:
+  use_softmax_gradcam: true
+  replace_cls_with_avg: true
+
+caa:
+  enabled: true
+  threshold: 0.4
+  iterations: 2
+
+crf:
+  enabled: true
+  iter: 10
+  pos_w: 3
+  pos_xy_std: 1
+  bi_w: 4
+  bi_xy_std: 67
+  bi_rgb_std: 3
+
+confidence:
+  threshold: 0.95
+
+dataset:
+  root: "data/CrossDomainSeg"
+  target_domain: "BCSS"
+  split: "train"
+
+output:
+  cam_dir: "outputs/stage2/cams/hist_to_bcss"
+  pseudomask_dir: "outputs/stage2/pseudomasks/hist_to_bcss"

@@ -1,0 +1,34 @@
+seed: 42
+
+backbone:
+  name: "ViT-B/16"
+  pretrained_model: "assets/ViT-B-16.pt"
+
+dataset:
+  source_domain: "Hist"
+  target_domain: "BCSS"
+  root: "data/CrossDomainSeg"
+
+mutual_prompting:
+  n_ctx_visual: 32
+  n_ctx_text: 32
+  class_token_position: "end"
+
+training:
+  epochs: 30
+  batch_size: 32
+  num_workers: 4
+  image_size: 224
+  warmup_epochs: 1
+  optimizer: "adam"
+  lr: 3.0e-3
+  weight_decay: 0.0
+  output_dir: "checkpoints/stage1"
+  save_every: 5
+
+losses:
+  lambda_cls: 1.0
+  lambda_u: 1.0
+  lambda_ind: 1.0
+  lambda_im: 1.0
+  tau: 0.5
