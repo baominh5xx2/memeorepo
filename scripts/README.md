@@ -82,3 +82,20 @@ Recommended clean layout:
 /home/admin/damp_es/stage1_damp/
 ...
 ```
+
+## Download raw datasets from Hugging Face
+
+If you uploaded `LUAD-HistoSeg.zip` and `BCSS-WSSS.zip` to a dataset repo,
+use this script on server to fetch and extract them into `data/`:
+
+```bash
+chmod +x scripts/fetch_hf_raw_data.sh
+export HF_TOKEN=hf_xxx
+./scripts/fetch_hf_raw_data.sh --repo-id Minhbao5xx2/damp_es --dest-root ./data
+```
+
+Then run pipeline:
+
+```bash
+python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg --stage2-disable-crf
+```
