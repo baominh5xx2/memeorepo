@@ -52,6 +52,7 @@ Useful options:
 - `--prepare-workers 64 --prepare-domain-workers 2` to speed up Phase 1 preprocessing.
 - `--skip-stage1 --stage1-ckpt <path>` when reusing existing Stage 1 checkpoint.
 - `--stage2-disable-crf` if `pydensecrf` is unavailable.
+- `--stage2-override runtime.io_workers=32 output.skip_existing=true` to speed/resume Stage2.
 - `--dry-run` to print all stage commands without executing.
 
 H200 defaults are now enabled in config files:
@@ -69,6 +70,12 @@ If you hit OOM, reduce stage batch sizes via override:
 
 ```bash
 python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg --stage1-override training.batch_size=64 --stage3-override training.batch_size=8 --stage2-disable-crf
+```
+
+If Stage2 is too slow, increase Stage2 loader workers and resume only pending samples:
+
+```bash
+python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg --skip-prepare --skip-stage1 --stage1-ckpt checkpoints/stage1/hist_to_bcss --stage2-override runtime.io_workers=32 runtime.prefetch_factor=8 output.skip_existing=true --stage2-disable-crf
 ```
 
 ## Troubleshooting

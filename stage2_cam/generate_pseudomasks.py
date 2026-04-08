@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from damp_es.common.config import apply_overrides, load_yaml_config, parse_overrides
@@ -33,6 +34,21 @@ class Stage2Paths:
     cam_dir: Path
     pseudomask_dir: Path
     confidence_dir: Path
+
+
+def preprocess_image_for_stage2(image_pil: Image.Image) -> torch.Tensor:
+    patch = 16
+    h = int(image_pil.height)
+    w = int(image_pil.width)
+    new_h = int(np.ceil(h / patch) * patch)
+    new_w = int(np.ceil(w / patch) * patch)
+    image = image_pil.resize((new_w, new_h), RESAMPLE_BILINEAR)
+    image_np = np.array(image).astype(np.float32) / 255.0
+    image_t = torch.from_numpy(image_np).permute(2, 0, 1)
+    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
+    std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
+    image_t = (image_t - mean) / std
+    return image_t
 
 
 def _resolve_amp_dtype(dtype_name: str) -> torch.dtype:
@@ -95,6 +111,31 @@ class TargetSplitReader:
         return sorted(matches)[0]
 
 
+class Stage2ImageDataset(Dataset):
+    def __init__(self, split_reader: TargetSplitReader, sample_ids: List[str]):
+        self.split_reader = split_reader
+        self.sample_ids = sample_ids
+
+    def __len__(self) -> int:
+        return len(self.sample_ids)
+
+    def __getitem__(self, index: int) -> Dict[str, object]:
+        sample_id = self.sample_ids[index]
+        image_path = self.split_reader.resolve_image_path(sample_id)
+        with Image.open(image_path) as image_file:
+            image_pil = image_file.convert("RGB")
+            orig_h, orig_w = int(image_pil.height), int(image_pil.width)
+            image_tensor = preprocess_image_for_stage2(image_pil)
+
+        return {
+            "sample_id": sample_id,
+            "image_path": str(image_path),
+            "orig_h": orig_h,
+            "orig_w": orig_w,
+            "image_tensor": image_tensor,
+        }
+
+
 class PseudoMaskGenerator:
     def __init__(self, cfg: Dict):
         self.cfg = cfg
@@ -153,9 +194,15 @@ class PseudoMaskGenerator:
         print(f"[Stage2] device={self.wrapper.device}")
         self.stage2_use_amp = bool(runtime_cfg.get("amp", True))
         self.stage2_amp_dtype = _resolve_amp_dtype(str(runtime_cfg.get("amp_dtype", "bf16")))
+        self.io_workers = max(0, int(runtime_cfg.get("io_workers", 32)))
+        self.io_pin_memory = bool(runtime_cfg.get("pin_memory", True))
+        self.io_prefetch_factor = max(1, int(runtime_cfg.get("prefetch_factor", 4)))
+        self.io_persistent_workers = bool(runtime_cfg.get("persistent_workers", True))
+        self.skip_existing = bool(output_cfg.get("skip_existing", True))
         print(
             f"[Stage2] amp={bool(self.stage2_use_amp and self.wrapper.device.type == 'cuda')} "
-            f"amp_dtype={self.stage2_amp_dtype} tf32={bool(runtime_cfg.get('allow_tf32', True))}"
+            f"amp_dtype={self.stage2_amp_dtype} tf32={bool(runtime_cfg.get('allow_tf32', True))} "
+            f"io_workers={self.io_workers}"
         )
 
         prompts_cfg = cfg["prompts"]
@@ -222,21 +269,44 @@ class PseudoMaskGenerator:
             split=self.cfg["dataset"]["split"],
         )
         sample_ids = split_reader.list_samples()
+        sample_ids = self._filter_pending_samples(sample_ids)
 
-        for sample_id in tqdm(sample_ids, desc="Stage2 pseudomask generation"):
-            image_path = split_reader.resolve_image_path(sample_id)
-            image_pil = Image.open(image_path).convert("RGB")
-            image_np = np.array(image_pil)
-            image_tensor = self._preprocess_image(image_pil).unsqueeze(0).to(self.wrapper.device)
-            orig_h, orig_w = int(image_np.shape[0]), int(image_np.shape[1])
+        if not sample_ids:
+            print("[Stage2] all samples already processed; nothing to do.")
+            return
+
+        dataset = Stage2ImageDataset(split_reader=split_reader, sample_ids=sample_ids)
+        loader_kwargs = {
+            "batch_size": 1,
+            "shuffle": False,
+            "num_workers": self.io_workers,
+            "pin_memory": self.io_pin_memory,
+        }
+        if self.io_workers > 0:
+            loader_kwargs["persistent_workers"] = self.io_persistent_workers
+            loader_kwargs["prefetch_factor"] = self.io_prefetch_factor
+        loader = DataLoader(dataset, **loader_kwargs)
+
+        for batch in tqdm(loader, total=len(dataset), desc="Stage2 pseudomask generation"):
+            sample_id = batch["sample_id"][0]
+            image_path = Path(batch["image_path"][0])
+            orig_h = int(batch["orig_h"][0])
+            orig_w = int(batch["orig_w"][0])
+            image_tensor = batch["image_tensor"].to(self.wrapper.device, non_blocking=True)
+
+            image_np = None
+            if self.use_crf and self.crf_refiner is not None:
+                with Image.open(image_path) as image_file:
+                    image_np = np.array(image_file.convert("RGB"))
 
             fg_cams = []
-            for class_idx in self.prompt_bundle.class_to_full_indices:
-                cam_result = self.cam_generator.compute(
-                    image=image_tensor,
-                    text_features=self.prompt_bundle.full_features,
-                    class_index=class_idx,
-                )
+            cam_results = self.cam_generator.compute_for_classes(
+                image=image_tensor,
+                text_features=self.prompt_bundle.full_features,
+                class_indices=self.prompt_bundle.class_to_full_indices,
+            )
+
+            for cam_result in cam_results:
 
                 cam = cam_result.cam
                 if self.cfg["caa"].get("enabled", True):
@@ -270,6 +340,9 @@ class PseudoMaskGenerator:
             probs = probs / (probs.sum(axis=0, keepdims=True) + 1e-8)
 
             if self.use_crf and self.crf_refiner is not None:
+                if image_np is None:
+                    with Image.open(image_path) as image_file:
+                        image_np = np.array(image_file.convert("RGB"))
                 probs = self.crf_refiner.refine(image_rgb=image_np, probs=probs)
 
             pred = np.argmax(probs, axis=0).astype(np.uint8)
@@ -289,19 +362,28 @@ class PseudoMaskGenerator:
                 allow_pickle=True,
             )
 
+    def _filter_pending_samples(self, sample_ids: List[str]) -> List[str]:
+        if not self.skip_existing:
+            return sample_ids
+
+        pending: List[str] = []
+        skipped = 0
+        for sample_id in sample_ids:
+            mask_path = self.paths.pseudomask_dir / f"{sample_id}.png"
+            conf_path = self.paths.confidence_dir / f"{sample_id}.npy"
+            cam_path = self.paths.cam_dir / f"{sample_id}.npy"
+            if mask_path.exists() and conf_path.exists() and cam_path.exists():
+                skipped += 1
+            else:
+                pending.append(sample_id)
+
+        if skipped > 0:
+            print(f"[Stage2] skip_existing enabled: skipped {skipped} completed samples")
+        print(f"[Stage2] pending samples: {len(pending)}")
+        return pending
+
     def _preprocess_image(self, image_pil: Image.Image) -> torch.Tensor:
-        patch = 16
-        h = int(image_pil.height)
-        w = int(image_pil.width)
-        new_h = int(np.ceil(h / patch) * patch)
-        new_w = int(np.ceil(w / patch) * patch)
-        image = image_pil.resize((new_w, new_h), RESAMPLE_BILINEAR)
-        image_np = np.array(image).astype(np.float32) / 255.0
-        image_t = torch.from_numpy(image_np).permute(2, 0, 1)
-        mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
-        std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
-        image_t = (image_t - mean) / std
-        return image_t
+        return preprocess_image_for_stage2(image_pil)
 
 
 def parse_args() -> argparse.Namespace:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
+from typing import List
 
 import torch
 import torch.nn.functional as F
@@ -31,6 +32,21 @@ class SoftmaxGradCAM:
         self.amp_dtype = amp_dtype
 
     def compute(self, image: torch.Tensor, text_features: torch.Tensor, class_index: int) -> CAMResult:
+        return self.compute_for_classes(
+            image=image,
+            text_features=text_features,
+            class_indices=[class_index],
+        )[0]
+
+    def compute_for_classes(
+        self,
+        image: torch.Tensor,
+        text_features: torch.Tensor,
+        class_indices: List[int],
+    ) -> List[CAMResult]:
+        if not class_indices:
+            return []
+
         image = image.to(self.damp_wrapper.device)
         image.requires_grad_(True)
         self.damp_wrapper.zero_grad()
@@ -53,23 +69,28 @@ class SoftmaxGradCAM:
             else:
                 scores = logits
 
-        class_score = scores[:, class_index].sum()
-        class_score.backward(retain_graph=True)
+        affinity = self.damp_wrapper.get_attention_affinity(num_layers=8).detach().float()
+        out: List[CAMResult] = []
+        for i, class_index in enumerate(class_indices):
+            self.damp_wrapper.zero_grad()
+            class_score = scores[:, class_index].sum()
+            class_score.backward(retain_graph=(i < len(class_indices) - 1))
 
-        activation = self.damp_wrapper.get_feature_map()
-        gradient = self.damp_wrapper.get_feature_gradient()
+            activation = self.damp_wrapper.get_feature_map()
+            gradient = self.damp_wrapper.get_feature_gradient()
 
-        weights = gradient.mean(dim=(2, 3), keepdim=True)
-        cam = (weights * activation).sum(dim=1, keepdim=True)
-        cam = F.relu(cam)
-        cam = F.interpolate(
-            cam,
-            size=image.shape[-2:],
-            mode="bilinear",
-            align_corners=False,
-        )
-        cam = cam[0, 0]
-        cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+            weights = gradient.mean(dim=(2, 3), keepdim=True)
+            cam = (weights * activation).sum(dim=1, keepdim=True)
+            cam = F.relu(cam)
+            cam = F.interpolate(
+                cam,
+                size=image.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+            cam = cam[0, 0]
+            cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
 
-        affinity = self.damp_wrapper.get_attention_affinity(num_layers=8)
-        return CAMResult(cam=cam.detach().float(), affinity=affinity.detach().float())
+            out.append(CAMResult(cam=cam.detach().float(), affinity=affinity))
+
+        return out

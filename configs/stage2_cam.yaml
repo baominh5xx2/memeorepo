@@ -44,6 +44,10 @@ runtime:
   matmul_precision: "high"
   amp: true
   amp_dtype: "bf16"
+  io_workers: 32
+  pin_memory: true
+  prefetch_factor: 4
+  persistent_workers: true
 
 dataset:
   root: "data/CrossDomainSeg"
@@ -53,3 +57,4 @@ dataset:
 output:
   cam_dir: "outputs/stage2/cams/hist_to_bcss"
   pseudomask_dir: "outputs/stage2/pseudomasks/hist_to_bcss"
+  skip_existing: true
