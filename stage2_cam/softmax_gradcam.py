@@ -72,4 +72,4 @@ class SoftmaxGradCAM:
         cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
 
         affinity = self.damp_wrapper.get_attention_affinity(num_layers=8)
-        return CAMResult(cam=cam.detach(), affinity=affinity.detach())
+        return CAMResult(cam=cam.detach().float(), affinity=affinity.detach().float())

@@ -26,6 +26,9 @@ class CAARefiner:
         self.n_iter = n_iter
 
     def refine(self, cam_2d: torch.Tensor, affinity: torch.Tensor) -> torch.Tensor:
+        cam_2d = cam_2d.float()
+        affinity = affinity.float()
+
         h, w = cam_2d.shape
         flat_cam = cam_2d.reshape(-1, 1)
 
@@ -56,7 +59,7 @@ class CAARefiner:
             box[int(r_idx.min()) : int(r_idx.max()) + 1, int(c_idx.min()) : int(c_idx.max()) + 1] = 1.0
             return box
 
-        score = cam_2d.detach().cpu().numpy().astype(np.float32)
+        score = cam_2d.detach().float().cpu().numpy().astype(np.float32)
         max_val = float(score.max())
         if max_val <= 0:
             return torch.ones_like(cam_2d)

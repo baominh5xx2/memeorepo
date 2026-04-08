@@ -262,7 +262,7 @@ class PseudoMaskGenerator:
                     mode="bilinear",
                     align_corners=False,
                 ).squeeze(0).squeeze(0)
-                fg_cams.append(cam.cpu().numpy())
+                fg_cams.append(cam.float().cpu().numpy())
 
             fg_prob = np.stack(fg_cams, axis=0)
             bg_prob = np.maximum(0.0, 1.0 - np.max(fg_prob, axis=0, keepdims=True))
