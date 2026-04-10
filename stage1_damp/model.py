@@ -238,6 +238,7 @@ class DAMPWrapper:
         device: str = "cuda",
         feature_layer: int = -1,
         n_ctx: int = 4,
+        context_decoder_layers: int = 2,
         class_names: Optional[list[str]] = None,
         prompt_template: str = "a histopathology patch of {}.",
         enable_mutual_prompting: bool = False,
@@ -261,7 +262,7 @@ class DAMPWrapper:
         self.context_decoder = ContextDecoder(
             transformer_width=256,
             transformer_heads=4,
-            transformer_layers=2,
+            transformer_layers=max(int(context_decoder_layers), 1),
             visual_dim=self.feature_dim,
             dropout=0.1,
         ).to(self.device)
@@ -272,6 +273,7 @@ class DAMPWrapper:
 
         self._feature_activation: Optional[torch.Tensor] = None
         self._feature_gradient: Optional[torch.Tensor] = None
+        self._last_visual_embeddings: Optional[torch.Tensor] = None
         self._attn_history: list[torch.Tensor] = []
 
         self._register_feature_hooks()
@@ -436,6 +438,11 @@ class DAMPWrapper:
         if self._feature_gradient is None:
             raise RuntimeError("No feature gradient available. Run backward first.")
         return self._tokens_to_feature_map(self._feature_gradient)
+
+    def get_visual_embeddings(self) -> torch.Tensor:
+        if self._last_visual_embeddings is None:
+            raise RuntimeError("No visual embeddings available. Run forward first.")
+        return self._last_visual_embeddings
 
     def load_damp_prompt_checkpoints(self, damp_ckpt_root: str | Path) -> None:
         """
@@ -602,6 +609,7 @@ class DAMPWrapper:
         if side * side != patch_tokens.shape[1]:
             raise ValueError("Patch token count is not a perfect square")
         visual_embeddings = patch_tokens.reshape(x.shape[0], side, side, x.shape[2]).permute(0, 3, 1, 2)
+        self._last_visual_embeddings = visual_embeddings
 
         return global_feat, visual_embeddings, final_tokens
 

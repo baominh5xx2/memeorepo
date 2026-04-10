@@ -39,5 +39,5 @@ runtime:
 
 cgl:
   enabled: true
-  confidence_threshold: 0.25
+  confidence_threshold: 0.40
   ignore_index: 255

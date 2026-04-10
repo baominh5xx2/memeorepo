@@ -96,7 +96,10 @@ class SoftmaxGradCAM:
 
         affinity = self.damp_wrapper.get_attention_affinity(num_layers=8).detach().float()
         activation = self.damp_wrapper.get_feature_map()
-        patch_features = activation[0].detach().float()
+        try:
+            patch_features = self.damp_wrapper.get_visual_embeddings()[0].detach().float()
+        except RuntimeError:
+            patch_features = activation[0].detach().float()
 
         out: List[CAMResult] = []
         for i, class_index in enumerate(class_indices):

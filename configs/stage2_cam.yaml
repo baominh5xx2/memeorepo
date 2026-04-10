@@ -8,7 +8,7 @@ model:
   feature_layer: -1
 
 prompts:
-  template: "a clean origami of {}."
+  template: "a histopathology patch of {}."
   classes:
     tumor: ["tumor", "cancer", "neoplasm", "carcinoma"]
     stroma: ["stroma", "stromal tissue", "connective tissue"]
@@ -34,7 +34,7 @@ caa:
   iterations: 2
 
 refinement:
-  mode: "hybrid" # caa | co_attention | hybrid
+  mode: "caa" # caa | co_attention | hybrid
   co_attention:
     alpha: 0.6
     beta: 0.4
@@ -51,7 +51,7 @@ crf:
   bi_rgb_std: 3
 
 confidence:
-  threshold: 0.25
+  threshold: 0.40
 
 runtime:
   allow_tf32: true

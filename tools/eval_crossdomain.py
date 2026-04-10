@@ -61,6 +61,8 @@ class CrossDomainEvaluator:
             (label_true >= 0)
             & (label_true < n_class)
             & (label_true != self.cfg.ignore_index)
+            & (label_pred >= 0)
+            & (label_pred < n_class)
         )
         hist = np.bincount(
             n_class * label_true[mask].astype(int) + label_pred[mask],

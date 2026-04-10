@@ -36,8 +36,8 @@ class CAARefiner:
         trans_mat = (trans_mat + trans_mat.t()) / 2.0
         trans_mat = torch.matmul(trans_mat, trans_mat)
 
-        box_mask = self._build_box_mask(cam_2d, threshold=self.threshold).reshape(1, -1)
-        trans_mat = trans_mat * box_mask
+        box_mask = self._build_box_mask(cam_2d, threshold=self.threshold).reshape(-1, 1)
+        trans_mat = trans_mat * box_mask * box_mask.t()
 
         refined = flat_cam
         for _ in range(max(self.n_iter, 1)):
@@ -82,8 +82,8 @@ class CAARefiner:
         for contour in contours:
             x, y, bw, bh = cv2.boundingRect(contour)
             x0, y0, x1, y1 = x, y, x + bw, y + bh
-            x1 = min(x1, width - 1)
-            y1 = min(y1, height - 1)
+            x1 = min(x1, width)
+            y1 = min(y1, height)
             box[y0:y1, x0:x1] = 1.0
 
         return box

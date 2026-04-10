@@ -170,11 +170,15 @@ class PseudoMaskGenerator:
         damp_ckpt = model_cfg.get("damp_ckpt")
 
         inferred_n_ctx = int(model_cfg.get("n_ctx", 4))
+        inferred_context_layers = int(model_cfg.get("context_decoder_layers", 2))
         inferred_class_names = None
         if use_damp_features and damp_ckpt:
             stage1_meta = self._load_stage1_meta(Path(damp_ckpt))
             if stage1_meta is not None:
                 inferred_n_ctx = int(stage1_meta.get("n_ctx", inferred_n_ctx))
+                inferred_context_layers = int(
+                    stage1_meta.get("context_decoder_layers", inferred_context_layers)
+                )
                 class_names = stage1_meta.get("class_names")
                 if isinstance(class_names, list) and class_names:
                     inferred_class_names = class_names
@@ -185,6 +189,7 @@ class PseudoMaskGenerator:
             device=self.device,
             feature_layer=int(model_cfg.get("feature_layer", -1)),
             n_ctx=inferred_n_ctx,
+            context_decoder_layers=inferred_context_layers,
             class_names=inferred_class_names,
             enable_mutual_prompting=use_damp_features,
         )
@@ -286,6 +291,17 @@ class PseudoMaskGenerator:
             out["n_ctx"] = checkpoint["n_ctx"]
         if "class_names" in checkpoint:
             out["class_names"] = checkpoint["class_names"]
+
+        context_state = checkpoint.get("context_decoder")
+        if isinstance(context_state, dict):
+            decoder_layer_ids: List[int] = []
+            for key in context_state.keys():
+                parts = key.split(".")
+                if len(parts) >= 3 and parts[0] == "decoder" and parts[1].isdigit():
+                    decoder_layer_ids.append(int(parts[1]))
+            if decoder_layer_ids:
+                out["context_decoder_layers"] = max(decoder_layer_ids) + 1
+
         return out if out else None
 
     def run(self) -> None:
@@ -387,12 +403,12 @@ class PseudoMaskGenerator:
                 probs = self.crf_refiner.refine(image_rgb=image_np, probs=probs)
 
             pred = np.argmax(probs, axis=0).astype(np.uint8)
-            confidence = np.max(probs, axis=0)
-            conf_threshold = float(self.cfg["confidence"].get("threshold", 0.25))
+            confidence = np.max(probs, axis=0).astype(np.float32)
+            conf_threshold = float(self.cfg["confidence"].get("threshold", 0.40))
             pred[confidence < conf_threshold] = 255
 
             Image.fromarray(pred, mode="L").save(self.paths.pseudomask_dir / f"{sample_id}.png")
-            np.save(self.paths.confidence_dir / f"{sample_id}.npy", cam_confidence)
+            np.save(self.paths.confidence_dir / f"{sample_id}.npy", confidence)
             np.save(
                 self.paths.cam_dir / f"{sample_id}.npy",
                 {

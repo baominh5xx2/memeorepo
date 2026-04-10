@@ -20,13 +20,9 @@ class ConfidenceGuidedLoss(nn.Module):
         confidence: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if confidence is None:
-            # Fallback: use CLIP-ES style confidence proxy max(max_fg, 1-max_fg).
+            # Fallback: multiclass confidence from predicted max probability.
             probs = F.softmax(logits.detach(), dim=1)
-            if probs.shape[1] > 1:
-                max_fg = probs[:, 1:, ...].amax(dim=1)
-            else:
-                max_fg = probs[:, 0, ...]
-            confidence = torch.maximum(max_fg, 1.0 - max_fg)
+            confidence = probs.amax(dim=1)
 
         per_pixel_loss = F.cross_entropy(
             logits,
