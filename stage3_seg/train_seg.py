@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from damp_es.common.config import apply_overrides, load_yaml_config, parse_overrides
+from damp_es.common.seed import set_global_seed
 from damp_es.datasets.crossdomain_seg import CrossDomainSegDataset
 from damp_es.stage3_seg.cgl import ConfidenceGuidedLoss
 from damp_es.stage3_seg.deeplab import DeepLabSegModel
@@ -42,6 +43,7 @@ def build_dataloaders(cfg):
         split=dataset_cfg["train_split"],
         image_size=int(train_cfg["image_size"]),
         pseudo_mask_dir=pseudo_mask_dir,
+        aug_cfg=cfg.get("augmentation", {}),
     )
     val_dataset = CrossDomainSegDataset(
         domain_root=domain_root,
@@ -64,13 +66,14 @@ def build_dataloaders(cfg):
         "shuffle": True,
         "num_workers": num_workers,
         "pin_memory": pin_memory,
-        "drop_last": True,
+        "drop_last": len(train_dataset) >= int(train_cfg["batch_size"]),
     }
     eval_loader_kwargs = {
         "batch_size": int(train_cfg["batch_size"]),
         "shuffle": False,
         "num_workers": num_workers,
         "pin_memory": pin_memory,
+        "drop_last": False,
     }
 
     if num_workers > 0:
@@ -98,6 +101,10 @@ def main() -> None:
     args = parse_args()
     cfg = load_yaml_config(args.config)
     cfg = apply_overrides(cfg, parse_overrides(args.override))
+
+    seed = int(cfg.get("seed", 42))
+    set_global_seed(seed)
+    print(f"[Stage3] set global seed={seed}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     runtime_cfg = cfg.get("runtime", {})

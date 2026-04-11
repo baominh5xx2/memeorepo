@@ -93,7 +93,7 @@ class SegmentationTrainer:
 
     def evaluate(self, loader: DataLoader, prediction_dir: str | Path | None = None) -> Dict[str, float]:
         self.model.eval()
-        num_classes = 3
+        num_classes = getattr(self.model, "num_classes", 3)
         confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
         out_dir = ensure_dir(prediction_dir) if prediction_dir is not None else None
 
@@ -163,7 +163,12 @@ class SegmentationTrainer:
 
             running_loss += float(loss.item())
 
-        return running_loss / max(len(self.train_loader), 1)
+        train_len = len(self.train_loader)
+        if train_len == 0:
+            print("[Warning] Train loader has 0 batches! Are you using drop_last=True with dataset size < batch size?")
+            return 0.0
+
+        return running_loss / train_len
 
     def _save_checkpoint(self, epoch: int, metrics: Dict[str, float], is_best: bool = False) -> None:
         suffix = "best" if is_best else f"epoch_{epoch:03d}"

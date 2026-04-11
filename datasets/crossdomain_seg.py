@@ -37,6 +37,7 @@ class CrossDomainSegDataset(Dataset):
         split: str,
         image_size: int = 512,
         pseudo_mask_dir: str | Path | None = None,
+        aug_cfg: dict | None = None,
     ):
         if split not in {"train", "val", "test"}:
             raise ValueError(f"split must be one of train/val/test, got: {split}")
@@ -45,6 +46,7 @@ class CrossDomainSegDataset(Dataset):
         self.split = split
         self.image_size = image_size
         self.pseudo_mask_dir = Path(pseudo_mask_dir) if pseudo_mask_dir else None
+        self.aug_cfg = aug_cfg or {}
         self.samples = self._load_samples()
 
     def __len__(self) -> int:
@@ -54,7 +56,56 @@ class CrossDomainSegDataset(Dataset):
         sample = self.samples[index]
 
         image = Image.open(sample.image_path).convert("RGB")
-        image = image.resize((self.image_size, self.image_size), RESAMPLE_BILINEAR)
+        
+        if sample.mask_path is not None:
+            if not sample.mask_path.exists():
+                raise FileNotFoundError(f"Mask file not found: {sample.mask_path}")
+            mask = Image.open(sample.mask_path)
+        else:
+            mask = Image.fromarray(np.full((image.height, image.width), 255, dtype=np.uint8))
+
+        if sample.confidence_path is not None and sample.confidence_path.exists():
+            conf_np = np.load(sample.confidence_path).astype(np.float32)
+            confidence = Image.fromarray(conf_np)
+        else:
+            confidence = Image.fromarray(np.ones((image.height, image.width), dtype=np.float32))
+
+        if self.split == "train" and self.aug_cfg:
+            from torchvision import transforms as T
+            from torchvision.transforms import ColorJitter
+            import torchvision.transforms.functional as F_v1
+            
+            # Color jitter (only image)
+            if self.aug_cfg.get("color_jitter"):
+                jitter = ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1)
+                image = jitter(image)
+                
+            # Random horizontal flip
+            if self.aug_cfg.get("random_flip") and torch.rand(1).item() > 0.5:
+                image = F_v1.hflip(image)
+                mask = F_v1.hflip(mask)
+                confidence = F_v1.hflip(confidence)
+                
+            # Random crop
+            if self.aug_cfg.get("random_crop"):
+                scale_size = int(self.image_size * 1.1)
+                image = F_v1.resize(image, (scale_size, scale_size), interpolation=RESAMPLE_BILINEAR)
+                mask = F_v1.resize(mask, (scale_size, scale_size), interpolation=RESAMPLE_NEAREST)
+                confidence = F_v1.resize(confidence, (scale_size, scale_size), interpolation=RESAMPLE_BILINEAR)
+                
+                i, j, h, w = T.RandomCrop.get_params(image, output_size=(self.image_size, self.image_size))
+                image = F_v1.crop(image, i, j, h, w)
+                mask = F_v1.crop(mask, i, j, h, w)
+                confidence = F_v1.crop(confidence, i, j, h, w)
+            else:
+                image = image.resize((self.image_size, self.image_size), RESAMPLE_BILINEAR)
+                mask = mask.resize((self.image_size, self.image_size), RESAMPLE_NEAREST)
+                confidence = confidence.resize((self.image_size, self.image_size), RESAMPLE_BILINEAR)
+        else:
+            image = image.resize((self.image_size, self.image_size), RESAMPLE_BILINEAR)
+            mask = mask.resize((self.image_size, self.image_size), RESAMPLE_NEAREST)
+            confidence = confidence.resize((self.image_size, self.image_size), RESAMPLE_BILINEAR)
+
         image_tensor = TF.to_tensor(image)
         image_tensor = TF.normalize(
             image_tensor,
@@ -62,24 +113,8 @@ class CrossDomainSegDataset(Dataset):
             std=[0.26862954, 0.26130258, 0.27577711],
         )
 
-        if sample.mask_path is not None and sample.mask_path.exists():
-            mask = Image.open(sample.mask_path)
-            mask = mask.resize((self.image_size, self.image_size), RESAMPLE_NEAREST)
-            mask_tensor = torch.from_numpy(np.array(mask, dtype=np.int64))
-        else:
-            mask_tensor = torch.full((self.image_size, self.image_size), 255, dtype=torch.long)
-
-        confidence_tensor = torch.ones((self.image_size, self.image_size), dtype=torch.float32)
-        if sample.confidence_path is not None and sample.confidence_path.exists():
-            conf_np = np.load(sample.confidence_path).astype(np.float32)
-            conf_tensor = torch.from_numpy(conf_np).unsqueeze(0).unsqueeze(0)
-            conf_tensor = F.interpolate(
-                conf_tensor,
-                size=(self.image_size, self.image_size),
-                mode="bilinear",
-                align_corners=False,
-            )
-            confidence_tensor = conf_tensor.squeeze(0).squeeze(0)
+        mask_tensor = torch.from_numpy(np.array(mask, dtype=np.int64))
+        confidence_tensor = torch.from_numpy(np.array(confidence, dtype=np.float32))
 
         return {
             "sample_id": sample.sample_id,
