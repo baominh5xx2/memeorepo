@@ -127,18 +127,18 @@ class PromptManager:
         target_index: int,
     ) -> str:
         best_prompt = candidates[0]
-        best_score = float("inf")
+        best_sharpness = float("inf")
+
+        del target_index
 
         for candidate in candidates:
             tokenized = damp_wrapper.tokenize([candidate])
             feature = damp_wrapper.encode_text(tokenized)[0]
             similarities = feature @ class_prototypes.t()
             sharpness = similarities.var() / (similarities.abs().mean() + self.sharpness_eps)
-            target_sim = similarities[target_index]
-            score = sharpness / (target_sim.abs() + self.sharpness_eps)
-            value = float(score.item())
-            if value < best_score:
-                best_score = value
+            value = float(sharpness.item())
+            if value < best_sharpness:
+                best_sharpness = value
                 best_prompt = candidate
 
         return best_prompt

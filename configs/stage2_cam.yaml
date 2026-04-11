@@ -5,10 +5,10 @@ model:
   clip_weights: "assets/ViT-B-16.pt"
   damp_ckpt: "checkpoints/stage1/hist_to_bcss"
   use_damp_features: true
-  feature_layer: -1
+  feature_layer: -2
 
 prompts:
-  template: "a histopathology patch of {}."
+  template: "a clean origami {}."
   classes:
     tumor: ["tumor", "cancer", "neoplasm", "carcinoma"]
     stroma: ["stroma", "stromal tissue", "connective tissue"]
@@ -20,8 +20,7 @@ prompts:
     use_sharpness_selection: true
     use_synonym_fusion: true
     extra_templates:
-      - "a histopathology patch of {}."
-      - "a microscopy image of {}."
+      - "a clean origami {}."
     sharpness_eps: 1.0e-6
 
 cam:
@@ -51,7 +50,8 @@ crf:
   bi_rgb_std: 3
 
 confidence:
-  threshold: 0.40
+  threshold: 0.95
+  source: "cam" # cam | prob
 
 runtime:
   allow_tf32: true
@@ -59,7 +59,7 @@ runtime:
   matmul_precision: "high"
   amp: true
   amp_dtype: "bf16"
-  batch_size: 8
+  batch_size: 128
   io_workers: 32
   pin_memory: true
   prefetch_factor: 4

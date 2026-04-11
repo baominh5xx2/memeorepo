@@ -19,8 +19,8 @@ optimizer:
   weight_decay: 1.0e-4
 
 training:
-  epochs: 40
-  batch_size: 16
+  epochs: 25
+  batch_size: 64
   num_workers: 16
   pin_memory: true
   persistent_workers: true
@@ -28,6 +28,19 @@ training:
   image_size: 512
   save_dir: "checkpoints/stage3/hist_to_bcss"
   eval_every: 1
+  early_stop_patience: 4
+  early_stop_min_delta: 0.002
+  consistency:
+    enabled: true
+    weight: 0.20
+    confidence_threshold: 0.60
+    noise_std: 0.05
+    drop_prob: 0.50
+    cutout_ratio: 0.20
+  augmentation:
+    random_flip: true
+    random_crop: true
+    color_jitter: true
 
 runtime:
   allow_tf32: true
@@ -39,5 +52,5 @@ runtime:
 
 cgl:
   enabled: true
-  confidence_threshold: 0.40
+  confidence_threshold: 0.60
   ignore_index: 255

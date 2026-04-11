@@ -10,7 +10,7 @@ from damp_es.common.config import apply_overrides, load_yaml_config, parse_overr
 from damp_es.common.seed import set_global_seed
 from damp_es.datasets.crossdomain_seg import CrossDomainSegDataset
 from damp_es.stage3_seg.cgl import ConfidenceGuidedLoss
-from damp_es.stage3_seg.deeplab import DeepLabSegModel
+from damp_es.stage3_seg.deeplab import build_segmentation_model
 from damp_es.stage3_seg.trainer import SegmentationTrainer
 
 
@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
 def build_dataloaders(cfg):
     dataset_cfg = cfg["dataset"]
     train_cfg = cfg["training"]
+    aug_cfg = train_cfg.get("augmentation", cfg.get("augmentation", {}))
 
     domain_root = Path(dataset_cfg["root"]) / dataset_cfg["domain"]
     pseudo_mask_dir = dataset_cfg.get("pseudo_mask_dir")
@@ -43,7 +44,7 @@ def build_dataloaders(cfg):
         split=dataset_cfg["train_split"],
         image_size=int(train_cfg["image_size"]),
         pseudo_mask_dir=pseudo_mask_dir,
-        aug_cfg=cfg.get("augmentation", {}),
+        aug_cfg=aug_cfg,
     )
     val_dataset = CrossDomainSegDataset(
         domain_root=domain_root,
@@ -128,20 +129,20 @@ def main() -> None:
     )
     model_cfg = cfg["model"]
     train_cfg = cfg["training"]
+    consistency_cfg = train_cfg.get("consistency", {})
     opt_cfg = cfg["optimizer"]
     cgl_cfg = cfg["cgl"]
 
-    if int(train_cfg["batch_size"]) < 2:
+    architecture = str(model_cfg.get("architecture", "deeplabv3_resnet101")).lower()
+
+    if architecture == "deeplabv3_resnet101" and int(train_cfg["batch_size"]) < 2:
         raise ValueError(
             "training.batch_size must be >= 2 for deeplabv3_resnet101 training "
             "because BatchNorm is unstable with singleton batches."
         )
 
-    architecture = str(model_cfg.get("architecture", "deeplabv3_resnet101")).lower()
-    if architecture != "deeplabv3_resnet101":
-        raise ValueError(f"Unsupported architecture: {architecture}")
-
-    model = DeepLabSegModel(
+    model = build_segmentation_model(
+        architecture=architecture,
         num_classes=int(model_cfg["num_classes"]),
         pretrained_backbone=bool(model_cfg.get("pretrained_backbone", True)),
     )
@@ -173,6 +174,12 @@ def main() -> None:
         criterion = PlainSegmentationLoss(ignore_index=int(cgl_cfg.get("ignore_index", 255)))
 
     train_loader, val_loader, test_loader = build_dataloaders(cfg)
+    print(
+        "[Stage3] consistency="
+        f"{bool(consistency_cfg.get('enabled', False))} "
+        f"weight={float(consistency_cfg.get('weight', 0.0)):.3f} "
+        f"conf_th={float(consistency_cfg.get('confidence_threshold', 0.6)):.2f}"
+    )
     trainer = SegmentationTrainer(
         model=model,
         optimizer=optimizer,
@@ -182,9 +189,17 @@ def main() -> None:
         device=device,
         save_dir=train_cfg["save_dir"],
         eval_every=int(train_cfg.get("eval_every", 1)),
+        early_stop_patience=int(train_cfg.get("early_stop_patience", 0)),
+        early_stop_min_delta=float(train_cfg.get("early_stop_min_delta", 0.0)),
         use_amp=bool(runtime_cfg.get("amp", True)),
         amp_dtype=str(runtime_cfg.get("amp_dtype", "bf16")),
         channels_last=bool(runtime_cfg.get("channels_last", True)),
+        consistency_enabled=bool(consistency_cfg.get("enabled", False)),
+        consistency_weight=float(consistency_cfg.get("weight", 0.0)),
+        consistency_confidence_threshold=float(consistency_cfg.get("confidence_threshold", 0.6)),
+        consistency_noise_std=float(consistency_cfg.get("noise_std", 0.05)),
+        consistency_drop_prob=float(consistency_cfg.get("drop_prob", 0.5)),
+        consistency_cutout_ratio=float(consistency_cfg.get("cutout_ratio", 0.2)),
     )
 
     trainer.train(epochs=int(train_cfg["epochs"]))

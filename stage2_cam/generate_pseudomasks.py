@@ -217,10 +217,19 @@ class PseudoMaskGenerator:
         self.io_prefetch_factor = max(1, int(runtime_cfg.get("prefetch_factor", 4)))
         self.io_persistent_workers = bool(runtime_cfg.get("persistent_workers", True))
         self.skip_existing = bool(output_cfg.get("skip_existing", True))
+        confidence_cfg = cfg.get("confidence", {})
+        self.mask_conf_threshold = float(confidence_cfg.get("threshold", 0.40))
+        self.cgl_confidence_source = str(confidence_cfg.get("source", "cam")).strip().lower()
+        if self.cgl_confidence_source not in {"cam", "prob"}:
+            raise ValueError(
+                "Unsupported confidence.source='"
+                f"{self.cgl_confidence_source}'. Expected one of: cam, prob"
+            )
         print(
             f"[Stage2] amp={bool(self.stage2_use_amp and self.wrapper.device.type == 'cuda')} "
             f"amp_dtype={self.stage2_amp_dtype} tf32={bool(runtime_cfg.get('allow_tf32', True))} "
-            f"io_batch_size={self.io_batch_size} io_workers={self.io_workers}"
+            f"io_batch_size={self.io_batch_size} io_workers={self.io_workers} "
+            f"conf_source={self.cgl_confidence_source} conf_threshold={self.mask_conf_threshold:.2f}"
         )
 
         prompts_cfg = cfg["prompts"]
@@ -423,9 +432,13 @@ class PseudoMaskGenerator:
                     probs = self.crf_refiner.refine(image_rgb=image_np, probs=probs)
 
                 pred = np.argmax(probs, axis=0).astype(np.uint8)
-                confidence = np.max(probs, axis=0).astype(np.float32)
-                conf_threshold = float(self.cfg["confidence"].get("threshold", 0.40))
-                pred[confidence < conf_threshold] = 255
+                prob_confidence = np.max(probs, axis=0).astype(np.float32)
+                pred[prob_confidence < self.mask_conf_threshold] = 255
+
+                if self.cgl_confidence_source == "cam":
+                    confidence = cam_confidence
+                else:
+                    confidence = prob_confidence
 
                 Image.fromarray(pred, mode="L").save(self.paths.pseudomask_dir / f"{sample_id}.png")
                 np.save(self.paths.confidence_dir / f"{sample_id}.npy", confidence)
@@ -436,6 +449,8 @@ class PseudoMaskGenerator:
                         "prompts": self.prompt_bundle.full_phrases,
                         "probs": probs,
                         "confidence": confidence,
+                        "prob_confidence": prob_confidence,
+                        "confidence_source": self.cgl_confidence_source,
                         "cam_confidence": cam_confidence,
                     },
                     allow_pickle=True,
