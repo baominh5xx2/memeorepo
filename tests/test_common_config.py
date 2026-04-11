@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from damp_es.common.config import ParsedOverride, apply_overrides, load_yaml_config, parse_overrides
+from common.config import ParsedOverride, apply_overrides, load_yaml_config, parse_overrides
 
 
 class TestCommonConfig(unittest.TestCase):

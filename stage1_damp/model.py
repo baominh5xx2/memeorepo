@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from damp_es.clip_es.simple_tokenizer import SimpleTokenizer as _Tokenizer
+from clip_es.simple_tokenizer import SimpleTokenizer as _Tokenizer
 
 
 _tokenizer = _Tokenizer()
@@ -146,7 +146,7 @@ class PromptLearner(nn.Module):
     ):
         super().__init__()
 
-        from damp_es.clip_es import clip as clip_es
+        from clip_es import clip as clip_es
 
         n_cls = len(class_names)
         dtype = clip_model.dtype
@@ -308,7 +308,7 @@ class DAMPWrapper:
         self.set_stage1_train(mode)
 
     def tokenize(self, prompts: list[str]) -> torch.Tensor:
-        from damp_es.clip_es import clip as clip_es
+        from clip_es import clip as clip_es
 
         return clip_es.tokenize(prompts).to(self.device)
 
@@ -537,7 +537,7 @@ class DAMPWrapper:
             torch.save(mutual_state, mutual_dir / "model-best.pth.tar")
 
     def _load_clip_model(self, backbone: str, clip_weights: str | None) -> nn.Module:
-        from damp_es.clip_es import clip as clip_es
+        from clip_es import clip as clip_es
 
         model_name_or_path = backbone
         if clip_weights:

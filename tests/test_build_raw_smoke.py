@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from damp_es.common.io import list_images
-from damp_es.tools.build_raw_smoke import build_raw_smoke
+from common.io import list_images
+from tools.build_raw_smoke import build_raw_smoke
 
 
 class TestBuildRawSmoke(unittest.TestCase):

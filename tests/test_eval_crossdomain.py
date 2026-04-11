@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from damp_es.tools.eval_crossdomain import CrossDomainEvaluator, EvalConfig
+from tools.eval_crossdomain import CrossDomainEvaluator, EvalConfig
 
 
 class TestCrossDomainEvaluator(unittest.TestCase):

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
 
-from damp_es.common.io import copy_file, ensure_dir, list_images
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from common.io import copy_file, ensure_dir, list_images
 
 
 @dataclass(frozen=True)

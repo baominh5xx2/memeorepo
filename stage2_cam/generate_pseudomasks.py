@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
@@ -12,14 +13,19 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from damp_es.common.config import apply_overrides, load_yaml_config, parse_overrides
-from damp_es.common.io import ensure_dir
-from damp_es.stage1_damp.model import DAMPWrapper
-from damp_es.stage2_cam.caa import CAARefiner
-from damp_es.stage2_cam.co_attention import BidirectionalCoAttentionRefiner
-from damp_es.stage2_cam.crf import CRFParams, DenseCRFRefiner
-from damp_es.stage2_cam.prompts import PromptManager
-from damp_es.stage2_cam.softmax_gradcam import SoftmaxGradCAM
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from common.config import apply_overrides, load_yaml_config, parse_overrides
+from common.io import ensure_dir
+from stage1_damp.model import DAMPWrapper
+from stage2_cam.caa import CAARefiner
+from stage2_cam.co_attention import BidirectionalCoAttentionRefiner
+from stage2_cam.crf import CRFParams, DenseCRFRefiner
+from stage2_cam.prompts import PromptManager
+from stage2_cam.softmax_gradcam import SoftmaxGradCAM
 
 
 try:

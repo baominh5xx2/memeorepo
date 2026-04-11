@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
@@ -8,7 +9,11 @@ from typing import Dict, List
 import numpy as np
 from PIL import Image
 
-from damp_es.datasets.constants import STROMA_LABEL, TUMOR_LABEL
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from datasets.constants import STROMA_LABEL, TUMOR_LABEL
 
 
 @dataclass

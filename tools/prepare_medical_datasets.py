@@ -4,6 +4,7 @@ import argparse
 import csv
 import os
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
@@ -14,9 +15,13 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
-from damp_es.common.io import copy_file, ensure_dir, list_images, write_lines
-from damp_es.datasets.constants import BCSS_SPEC, LUAD_SPEC
-from damp_es.datasets.label_mappers import MaskRemapper
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from common.io import copy_file, ensure_dir, list_images, write_lines
+from datasets.constants import BCSS_SPEC, LUAD_SPEC
+from datasets.label_mappers import MaskRemapper
 
 
 T = TypeVar("T")

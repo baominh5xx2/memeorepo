@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from damp_es.stage1_damp.data import SourceWeakLabelDataset, flags_to_label, parse_flags_from_sample_id
+from stage1_damp.data import SourceWeakLabelDataset, flags_to_label, parse_flags_from_sample_id
 
 
 class TestStage1Data(unittest.TestCase):

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from damp_es.common.io import list_images
+from common.io import list_images
 
 
 class TestCommonIO(unittest.TestCase):

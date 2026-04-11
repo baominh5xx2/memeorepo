@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 
-from damp_es.common.config import apply_overrides, load_yaml_config, parse_overrides
-from damp_es.common.seed import set_global_seed
-from damp_es.datasets.crossdomain_seg import CrossDomainSegDataset
-from damp_es.stage3_seg.cgl import ConfidenceGuidedLoss
-from damp_es.stage3_seg.deeplab import build_segmentation_model
-from damp_es.stage3_seg.trainer import SegmentationTrainer
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from common.config import apply_overrides, load_yaml_config, parse_overrides
+from common.seed import set_global_seed
+from datasets.crossdomain_seg import CrossDomainSegDataset
+from stage3_seg.cgl import ConfidenceGuidedLoss
+from stage3_seg.deeplab import build_segmentation_model
+from stage3_seg.trainer import SegmentationTrainer
 
 
 class PlainSegmentationLoss(torch.nn.Module):

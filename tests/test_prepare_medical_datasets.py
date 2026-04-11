@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from damp_es.datasets.constants import BCSS_SPEC, LUAD_SPEC
-from damp_es.datasets.label_mappers import MaskRemapper
-from damp_es.tools.prepare_medical_datasets import (
+from datasets.constants import BCSS_SPEC, LUAD_SPEC
+from datasets.label_mappers import MaskRemapper
+from tools.prepare_medical_datasets import (
     DomainPaths,
     DomainPreprocessor,
     WeakLabelParser,

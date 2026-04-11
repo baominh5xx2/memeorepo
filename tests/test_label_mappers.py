@@ -4,8 +4,8 @@ import unittest
 
 import numpy as np
 
-from damp_es.datasets.constants import BCSS_SPEC, LUAD_SPEC, IGNORE_LABEL
-from damp_es.datasets.label_mappers import MaskRemapper
+from datasets.constants import BCSS_SPEC, LUAD_SPEC, IGNORE_LABEL
+from datasets.label_mappers import MaskRemapper
 
 
 class TestMaskRemapper(unittest.TestCase):

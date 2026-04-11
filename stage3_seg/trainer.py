@@ -12,8 +12,8 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from damp_es.common.io import ensure_dir
-from damp_es.datasets.constants import STROMA_LABEL, TUMOR_LABEL
+from common.io import ensure_dir
+from datasets.constants import STROMA_LABEL, TUMOR_LABEL
 
 
 @dataclass

@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import random
+import sys
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,10 +16,14 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from damp_es.common.config import apply_overrides, load_yaml_config, parse_overrides
-from damp_es.common.io import ensure_dir
-from damp_es.stage1_damp.data import SourceWeakLabelDataset, SplitImageDataset
-from damp_es.stage1_damp.model import DAMPWrapper
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from common.config import apply_overrides, load_yaml_config, parse_overrides
+from common.io import ensure_dir
+from stage1_damp.data import SourceWeakLabelDataset, SplitImageDataset
+from stage1_damp.model import DAMPWrapper
 
 
 @dataclass

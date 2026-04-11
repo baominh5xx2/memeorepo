@@ -13,7 +13,7 @@ TORCHVISION_AVAILABLE = importlib.util.find_spec("torchvision") is not None
 @unittest.skipUnless(TORCH_AVAILABLE and TORCHVISION_AVAILABLE, "torch/torchvision is required")
 class TestCrossDomainSegPaths(unittest.TestCase):
     def test_resolve_sample_id_with_brackets(self) -> None:
-        from damp_es.datasets.crossdomain_seg import CrossDomainSegDataset
+        from datasets.crossdomain_seg import CrossDomainSegDataset
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
