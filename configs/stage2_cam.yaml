@@ -59,6 +59,7 @@ runtime:
   matmul_precision: "high"
   amp: true
   amp_dtype: "bf16"
+  batch_size: 8
   io_workers: 32
   pin_memory: true
   prefetch_factor: 4

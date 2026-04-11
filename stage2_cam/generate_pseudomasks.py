@@ -137,6 +137,17 @@ class Stage2ImageDataset(Dataset):
         }
 
 
+def stage2_collate_fn(batch: List[Dict[str, object]]) -> Dict[str, object]:
+    # Keep tensors as a list because each sample can have different HxW.
+    return {
+        "sample_id": [str(item["sample_id"]) for item in batch],
+        "image_path": [str(item["image_path"]) for item in batch],
+        "orig_h": [int(item["orig_h"]) for item in batch],
+        "orig_w": [int(item["orig_w"]) for item in batch],
+        "image_tensor": [item["image_tensor"] for item in batch],
+    }
+
+
 class PseudoMaskGenerator:
     def __init__(self, cfg: Dict):
         self.cfg = cfg
@@ -200,6 +211,7 @@ class PseudoMaskGenerator:
         print(f"[Stage2] device={self.wrapper.device}")
         self.stage2_use_amp = bool(runtime_cfg.get("amp", True))
         self.stage2_amp_dtype = _resolve_amp_dtype(str(runtime_cfg.get("amp_dtype", "bf16")))
+        self.io_batch_size = max(1, int(runtime_cfg.get("batch_size", 8)))
         self.io_workers = max(0, int(runtime_cfg.get("io_workers", 32)))
         self.io_pin_memory = bool(runtime_cfg.get("pin_memory", True))
         self.io_prefetch_factor = max(1, int(runtime_cfg.get("prefetch_factor", 4)))
@@ -208,7 +220,7 @@ class PseudoMaskGenerator:
         print(
             f"[Stage2] amp={bool(self.stage2_use_amp and self.wrapper.device.type == 'cuda')} "
             f"amp_dtype={self.stage2_amp_dtype} tf32={bool(runtime_cfg.get('allow_tf32', True))} "
-            f"io_workers={self.io_workers}"
+            f"io_batch_size={self.io_batch_size} io_workers={self.io_workers}"
         )
 
         prompts_cfg = cfg["prompts"]
@@ -318,108 +330,116 @@ class PseudoMaskGenerator:
 
         dataset = Stage2ImageDataset(split_reader=split_reader, sample_ids=sample_ids)
         loader_kwargs = {
-            "batch_size": 1,
+            "batch_size": self.io_batch_size,
             "shuffle": False,
             "num_workers": self.io_workers,
             "pin_memory": self.io_pin_memory,
+            "collate_fn": stage2_collate_fn,
         }
         if self.io_workers > 0:
             loader_kwargs["persistent_workers"] = self.io_persistent_workers
             loader_kwargs["prefetch_factor"] = self.io_prefetch_factor
         loader = DataLoader(dataset, **loader_kwargs)
 
-        for batch in tqdm(loader, total=len(dataset), desc="Stage2 pseudomask generation"):
-            sample_id = batch["sample_id"][0]
-            image_path = Path(batch["image_path"][0])
-            orig_h = int(batch["orig_h"][0])
-            orig_w = int(batch["orig_w"][0])
-            image_tensor = batch["image_tensor"].to(self.wrapper.device, non_blocking=True)
+        for batch in tqdm(loader, total=len(loader), desc="Stage2 pseudomask generation"):
+            for sample_id, image_path, orig_h, orig_w, image_tensor in zip(
+                batch["sample_id"],
+                batch["image_path"],
+                batch["orig_h"],
+                batch["orig_w"],
+                batch["image_tensor"],
+            ):
+                image_path = Path(image_path)
+                orig_h = int(orig_h)
+                orig_w = int(orig_w)
+                image_tensor = image_tensor.unsqueeze(0).to(self.wrapper.device, non_blocking=True)
 
-            image_np = None
-            if self.use_crf and self.crf_refiner is not None:
-                with Image.open(image_path) as image_file:
-                    image_np = np.array(image_file.convert("RGB"))
-
-            fg_cams = []
-            cam_results = self.cam_generator.compute_for_classes(
-                image=image_tensor,
-                class_indices=self.prompt_bundle.class_to_full_indices,
-                tokenized_prompts=self.prompt_bundle.tokenized_full,
-                use_mutual_text=True,
-            )
-
-            for cam_result in cam_results:
-
-                cam = cam_result.cam
-                affinity = cam_result.affinity
-                token_side = int(round(float(affinity.shape[0]) ** 0.5))
-                cam_low = F.interpolate(
-                    cam.unsqueeze(0).unsqueeze(0),
-                    size=(token_side, token_side),
-                    mode="bilinear",
-                    align_corners=False,
-                ).squeeze(0).squeeze(0)
-
-                use_caa = self.refinement_mode in {"caa", "hybrid"} and bool(self.cfg["caa"].get("enabled", True))
-                use_coattn = self.refinement_mode in {"co_attention", "hybrid"}
-
-                if use_caa:
-                    affinity = cam_result.affinity
-                    cam_low = self.caa_refiner.refine(cam_2d=cam_low, affinity=affinity)
-
-                if use_coattn:
-                    cam_low = self.co_attention_refiner.refine(
-                        cam_2d=cam_low,
-                        patch_features=cam_result.patch_features,
-                        text_feature=cam_result.text_feature,
-                    )
-
-                cam = F.interpolate(
-                    cam_low.unsqueeze(0).unsqueeze(0),
-                    size=cam.shape,
-                    mode="bilinear",
-                    align_corners=False,
-                ).squeeze(0).squeeze(0)
-                cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
-                cam = F.interpolate(
-                    cam.unsqueeze(0).unsqueeze(0),
-                    size=(orig_h, orig_w),
-                    mode="bilinear",
-                    align_corners=False,
-                ).squeeze(0).squeeze(0)
-                fg_cams.append(cam.float().cpu().numpy())
-
-            fg_prob = np.stack(fg_cams, axis=0)
-            max_fg = np.max(fg_prob, axis=0)
-            cam_confidence = np.maximum(max_fg, 1.0 - max_fg).astype(np.float32)
-            bg_prob = np.maximum(0.0, 1.0 - np.max(fg_prob, axis=0, keepdims=True))
-            probs = np.concatenate([bg_prob, fg_prob], axis=0).astype(np.float32)
-            probs = probs / (probs.sum(axis=0, keepdims=True) + 1e-8)
-
-            if self.use_crf and self.crf_refiner is not None:
-                if image_np is None:
+                image_np = None
+                if self.use_crf and self.crf_refiner is not None:
                     with Image.open(image_path) as image_file:
                         image_np = np.array(image_file.convert("RGB"))
-                probs = self.crf_refiner.refine(image_rgb=image_np, probs=probs)
 
-            pred = np.argmax(probs, axis=0).astype(np.uint8)
-            confidence = np.max(probs, axis=0).astype(np.float32)
-            conf_threshold = float(self.cfg["confidence"].get("threshold", 0.40))
-            pred[confidence < conf_threshold] = 255
+                fg_cams = []
+                cam_results = self.cam_generator.compute_for_classes(
+                    image=image_tensor,
+                    class_indices=self.prompt_bundle.class_to_full_indices,
+                    tokenized_prompts=self.prompt_bundle.tokenized_full,
+                    use_mutual_text=True,
+                )
 
-            Image.fromarray(pred, mode="L").save(self.paths.pseudomask_dir / f"{sample_id}.png")
-            np.save(self.paths.confidence_dir / f"{sample_id}.npy", confidence)
-            np.save(
-                self.paths.cam_dir / f"{sample_id}.npy",
-                {
-                    "class_names": self.prompt_bundle.class_names,
-                    "prompts": self.prompt_bundle.full_phrases,
-                    "probs": probs,
-                    "confidence": confidence,
-                    "cam_confidence": cam_confidence,
-                },
-                allow_pickle=True,
-            )
+                for cam_result in cam_results:
+                    cam = cam_result.cam
+                    affinity = cam_result.affinity
+                    token_side = int(round(float(affinity.shape[0]) ** 0.5))
+                    cam_low = F.interpolate(
+                        cam.unsqueeze(0).unsqueeze(0),
+                        size=(token_side, token_side),
+                        mode="bilinear",
+                        align_corners=False,
+                    ).squeeze(0).squeeze(0)
+
+                    use_caa = self.refinement_mode in {"caa", "hybrid"} and bool(
+                        self.cfg["caa"].get("enabled", True)
+                    )
+                    use_coattn = self.refinement_mode in {"co_attention", "hybrid"}
+
+                    if use_caa:
+                        affinity = cam_result.affinity
+                        cam_low = self.caa_refiner.refine(cam_2d=cam_low, affinity=affinity)
+
+                    if use_coattn:
+                        cam_low = self.co_attention_refiner.refine(
+                            cam_2d=cam_low,
+                            patch_features=cam_result.patch_features,
+                            text_feature=cam_result.text_feature,
+                        )
+
+                    cam = F.interpolate(
+                        cam_low.unsqueeze(0).unsqueeze(0),
+                        size=cam.shape,
+                        mode="bilinear",
+                        align_corners=False,
+                    ).squeeze(0).squeeze(0)
+                    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+                    cam = F.interpolate(
+                        cam.unsqueeze(0).unsqueeze(0),
+                        size=(orig_h, orig_w),
+                        mode="bilinear",
+                        align_corners=False,
+                    ).squeeze(0).squeeze(0)
+                    fg_cams.append(cam.float().cpu().numpy())
+
+                fg_prob = np.stack(fg_cams, axis=0)
+                max_fg = np.max(fg_prob, axis=0)
+                cam_confidence = np.maximum(max_fg, 1.0 - max_fg).astype(np.float32)
+                bg_prob = np.maximum(0.0, 1.0 - np.max(fg_prob, axis=0, keepdims=True))
+                probs = np.concatenate([bg_prob, fg_prob], axis=0).astype(np.float32)
+                probs = probs / (probs.sum(axis=0, keepdims=True) + 1e-8)
+
+                if self.use_crf and self.crf_refiner is not None:
+                    if image_np is None:
+                        with Image.open(image_path) as image_file:
+                            image_np = np.array(image_file.convert("RGB"))
+                    probs = self.crf_refiner.refine(image_rgb=image_np, probs=probs)
+
+                pred = np.argmax(probs, axis=0).astype(np.uint8)
+                confidence = np.max(probs, axis=0).astype(np.float32)
+                conf_threshold = float(self.cfg["confidence"].get("threshold", 0.40))
+                pred[confidence < conf_threshold] = 255
+
+                Image.fromarray(pred, mode="L").save(self.paths.pseudomask_dir / f"{sample_id}.png")
+                np.save(self.paths.confidence_dir / f"{sample_id}.npy", confidence)
+                np.save(
+                    self.paths.cam_dir / f"{sample_id}.npy",
+                    {
+                        "class_names": self.prompt_bundle.class_names,
+                        "prompts": self.prompt_bundle.full_phrases,
+                        "probs": probs,
+                        "confidence": confidence,
+                        "cam_confidence": cam_confidence,
+                    },
+                    allow_pickle=True,
+                )
 
     def _filter_pending_samples(self, sample_ids: List[str]) -> List[str]:
         if not self.skip_existing:
