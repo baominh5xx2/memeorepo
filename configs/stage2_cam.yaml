@@ -5,7 +5,7 @@ model:
   clip_weights: "assets/ViT-B-16.pt"
   damp_ckpt: "checkpoints/stage1/retest_hist_to_bcss"
   use_damp_features: true
-  feature_layer: -2
+  feature_layer: -1
 
 prompts:
   template: "a clean origami {}."
