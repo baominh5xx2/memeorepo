@@ -20,8 +20,8 @@ optimizer:
 
 training:
   epochs: 25
-  batch_size: 64
-  num_workers: 16
+  batch_size: 8
+  num_workers: 8
   pin_memory: true
   persistent_workers: true
   prefetch_factor: 4
@@ -31,8 +31,8 @@ training:
   early_stop_patience: 4
   early_stop_min_delta: 0.002
   consistency:
-    enabled: true
-    weight: 0.20
+    enabled: false
+    weight: 0.00
     confidence_threshold: 0.60
     noise_std: 0.05
     drop_prob: 0.50
@@ -52,5 +52,5 @@ runtime:
 
 cgl:
   enabled: true
-  confidence_threshold: 0.60
+  confidence_threshold: 0.35
   ignore_index: 255

@@ -29,8 +29,8 @@ cam:
 
 caa:
   enabled: true
-  threshold: 0.5
-  iterations: 1
+  threshold: 0.45
+  iterations: 2
 
 refinement:
   mode: "caa" # caa | co_attention | hybrid
@@ -50,7 +50,7 @@ crf:
   bi_rgb_std: 3
 
 confidence:
-  threshold: 0.72
+  threshold: 0.60
   source: "prob" # cam | prob
 
 runtime:
