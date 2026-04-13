@@ -3,7 +3,7 @@ seed: 42
 model:
   clip_backbone: "ViT-B/16"
   clip_weights: "assets/ViT-B-16.pt"
-  damp_ckpt: "checkpoints/stage1/retest_hist_to_bcss"
+  damp_ckpt: "checkpoints/stage1/hist_to_bcss"
   use_damp_features: true
   feature_layer: -1
 
@@ -63,7 +63,7 @@ runtime:
   persistent_workers: true
 
 dataset:
-  root: "data/CrossDomainSeg_retest"
+  root: "data/CrossDomainSeg"
   target_domain: "BCSS"
   split: "train"
 
