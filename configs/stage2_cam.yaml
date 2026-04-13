@@ -3,7 +3,7 @@ seed: 42
 model:
   clip_backbone: "ViT-B/16"
   clip_weights: "assets/ViT-B-16.pt"
-  damp_ckpt: "checkpoints/stage1/hist_to_bcss"
+  damp_ckpt: "checkpoints/stage1/retest_hist_to_bcss"
   use_damp_features: true
   feature_layer: -2
 
@@ -50,13 +50,10 @@ crf:
   bi_rgb_std: 3
 
 confidence:
-  threshold: 0.95
-  source: "cam" # cam | prob
+  threshold: 0.5
+  source: "prob" # cam | prob
 
 runtime:
-  allow_tf32: true
-  cudnn_benchmark: true
-  matmul_precision: "high"
   amp: true
   amp_dtype: "bf16"
   batch_size: 128
@@ -66,7 +63,7 @@ runtime:
   persistent_workers: true
 
 dataset:
-  root: "data/CrossDomainSeg"
+  root: "data/CrossDomainSeg_retest"
   target_domain: "BCSS"
   split: "train"
 

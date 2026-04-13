@@ -127,18 +127,26 @@ class PromptManager:
         target_index: int,
     ) -> str:
         best_prompt = candidates[0]
-        best_sharpness = float("inf")
-
-        del target_index
+        best_value = float("-inf")
 
         for candidate in candidates:
             tokenized = damp_wrapper.tokenize([candidate])
             feature = damp_wrapper.encode_text(tokenized)[0]
             similarities = feature @ class_prototypes.t()
-            sharpness = similarities.var() / (similarities.abs().mean() + self.sharpness_eps)
-            value = float(sharpness.item())
-            if value < best_sharpness:
-                best_sharpness = value
+            
+            target_score = similarities[target_index]
+            other_scores = torch.cat([similarities[:target_index], similarities[target_index+1:]], dim=0)
+
+            if other_scores.shape[0] > 1:
+                sharpness = other_scores.var(unbiased=False) / (other_scores.abs().mean() + self.sharpness_eps)
+            else:
+                sharpness = torch.tensor(0.0, device=other_scores.device)
+            
+            score = target_score - 0.25 * sharpness
+
+            value = float(score.item())
+            if value > best_value:
+                best_value = value
                 best_prompt = candidate
 
         return best_prompt

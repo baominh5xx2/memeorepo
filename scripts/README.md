@@ -75,7 +75,7 @@ python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root
 If Stage2 is too slow, increase Stage2 loader workers and resume only pending samples:
 
 ```bash
-python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg --skip-prepare --skip-stage1 --stage1-ckpt checkpoints/stage1/hist_to_bcss --stage2-override runtime.io_workers=32 runtime.prefetch_factor=8 output.skip_existing=true --stage2-disable-crf
+python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg --skip-prepare --skip-stage1 --stage1-ckpt checkpoints/stage1/hist_to_bcss --stage2-override runtime.batch_size=8 runtime.io_workers=32 runtime.prefetch_factor=8 output.skip_existing=true --stage2-disable-crf
 ```
 
 ## Troubleshooting
@@ -122,5 +122,5 @@ export HF_TOKEN=hf_xxx
 Then run pipeline:
 
 ```bash
-python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg --stage2-disable-crf
+python main.py --source Hist --target BCSS --raw-data-root ./data --dataset-root ./data/CrossDomainSeg 
 ```

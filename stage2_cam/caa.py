@@ -36,8 +36,13 @@ class CAARefiner:
         trans_mat = (trans_mat + trans_mat.t()) / 2.0
         trans_mat = torch.matmul(trans_mat, trans_mat)
 
-        box_mask = self._build_box_mask(cam_2d, threshold=self.threshold).reshape(-1, 1)
+        box_mask_2d = self._build_box_mask(cam_2d, threshold=self.threshold)
+        if box_mask_2d.sum() == 0:
+            return cam_2d
+
+        box_mask = box_mask_2d.reshape(-1, 1)
         trans_mat = trans_mat * box_mask * box_mask.t()
+        trans_mat = _normalize_transition(trans_mat, n_iter=2)
 
         refined = flat_cam
         for _ in range(max(self.n_iter, 1)):
@@ -50,7 +55,7 @@ class CAARefiner:
         if cv2 is None:
             seed_mask = cam_2d > threshold
             if not seed_mask.any():
-                return torch.ones_like(cam_2d)
+                return torch.zeros_like(cam_2d)
             rows = seed_mask.any(dim=1)
             cols = seed_mask.any(dim=0)
             r_idx = torch.where(rows)[0]
@@ -62,7 +67,7 @@ class CAARefiner:
         score = cam_2d.detach().float().cpu().numpy().astype(np.float32)
         max_val = float(score.max())
         if max_val <= 0:
-            return torch.ones_like(cam_2d)
+            return torch.zeros_like(cam_2d)
 
         score_u8 = np.expand_dims((score * 255.0).astype(np.uint8), axis=2)
         _, thr = cv2.threshold(
@@ -74,7 +79,7 @@ class CAARefiner:
         contour_idx = 1 if cv2.__version__.split(".")[0] == "3" else 0
         contours = cv2.findContours(thr, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[contour_idx]
         if len(contours) == 0:
-            return torch.ones_like(cam_2d)
+            return torch.zeros_like(cam_2d)
 
         box = torch.zeros_like(cam_2d)
         width = int(score.shape[1])

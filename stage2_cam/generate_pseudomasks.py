@@ -160,16 +160,6 @@ class PseudoMaskGenerator:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         runtime_cfg = cfg.get("runtime", {})
 
-        if torch.cuda.is_available():
-            allow_tf32 = bool(runtime_cfg.get("allow_tf32", True))
-            torch.backends.cuda.matmul.allow_tf32 = allow_tf32
-            torch.backends.cudnn.allow_tf32 = allow_tf32
-            torch.backends.cudnn.benchmark = bool(runtime_cfg.get("cudnn_benchmark", True))
-            try:
-                torch.set_float32_matmul_precision(str(runtime_cfg.get("matmul_precision", "high")))
-            except Exception:
-                pass
-
         dataset_cfg = cfg["dataset"]
         output_cfg = cfg["output"]
 
@@ -233,7 +223,7 @@ class PseudoMaskGenerator:
             )
         print(
             f"[Stage2] amp={bool(self.stage2_use_amp and self.wrapper.device.type == 'cuda')} "
-            f"amp_dtype={self.stage2_amp_dtype} tf32={bool(runtime_cfg.get('allow_tf32', True))} "
+            f"amp_dtype={self.stage2_amp_dtype} "
             f"io_batch_size={self.io_batch_size} io_workers={self.io_workers} "
             f"conf_source={self.cgl_confidence_source} conf_threshold={self.mask_conf_threshold:.2f}"
         )
@@ -385,10 +375,22 @@ class PseudoMaskGenerator:
                 for cam_result in cam_results:
                     cam = cam_result.cam
                     affinity = cam_result.affinity
-                    token_side = int(round(float(affinity.shape[0]) ** 0.5))
+                    patch_features = cam_result.patch_features
+                    if patch_features.ndim != 3:
+                        raise ValueError(f"Expected patch_features [C,H,W], got {patch_features.shape}")
+                    
+                    token_h, token_w = int(patch_features.shape[1]), int(patch_features.shape[2])
+                    num_tokens = token_h * token_w
+                    
+                    if affinity.dim() == 2:
+                        if affinity.shape[0] == num_tokens + 1:
+                            affinity = affinity[1:, 1:]
+                        elif affinity.shape[0] != num_tokens:
+                            raise ValueError(f"Affinity shape {affinity.shape} does not match patch grid {token_h}x{token_w}")
+                    
                     cam_low = F.interpolate(
                         cam.unsqueeze(0).unsqueeze(0),
-                        size=(token_side, token_side),
+                        size=(token_h, token_w),
                         mode="bilinear",
                         align_corners=False,
                     ).squeeze(0).squeeze(0)
@@ -425,8 +427,7 @@ class PseudoMaskGenerator:
                     fg_cams.append(cam.float().cpu().numpy())
 
                 fg_prob = np.stack(fg_cams, axis=0)
-                max_fg = np.max(fg_prob, axis=0)
-                cam_confidence = np.maximum(max_fg, 1.0 - max_fg).astype(np.float32)
+                cam_confidence = np.max(fg_prob, axis=0).astype(np.float32)
                 bg_prob = np.maximum(0.0, 1.0 - np.max(fg_prob, axis=0, keepdims=True))
                 probs = np.concatenate([bg_prob, fg_prob], axis=0).astype(np.float32)
                 probs = probs / (probs.sum(axis=0, keepdims=True) + 1e-8)
